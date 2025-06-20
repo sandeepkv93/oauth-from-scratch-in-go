@@ -9,13 +9,15 @@ import (
 	"time"
 
 	"oauth-server/internal/auth"
+	"oauth-server/internal/monitoring"
 	"oauth-server/pkg/jwt"
 )
 
 type Middleware struct {
-	auth      *auth.Service
+	auth       *auth.Service
+	metrics    *monitoring.Service
 	rateLimits map[string]*rateLimiter
-	mutex     sync.RWMutex
+	mutex      sync.RWMutex
 }
 
 type rateLimiter struct {
@@ -25,9 +27,10 @@ type rateLimiter struct {
 	windowDur time.Duration
 }
 
-func NewMiddleware(authService *auth.Service) *Middleware {
+func NewMiddleware(authService *auth.Service, metricsService *monitoring.Service) *Middleware {
 	return &Middleware{
 		auth:       authService,
+		metrics:    metricsService,
 		rateLimits: make(map[string]*rateLimiter),
 	}
 }
@@ -36,14 +39,22 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		
+		m.metrics.IncrementRequests()
+		m.metrics.IncrementActiveRequests()
+		m.metrics.RecordEndpointRequest(r.URL.Path)
+		
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(wrapped, r)
+		
+		duration := time.Since(start)
+		m.metrics.DecrementActiveRequests()
+		m.metrics.RecordResponseTime(r.URL.Path, duration)
 		
 		log.Printf("%s %s %d %v %s",
 			r.Method,
 			r.URL.Path,
 			wrapped.statusCode,
-			time.Since(start),
+			duration,
 			r.RemoteAddr,
 		)
 	})

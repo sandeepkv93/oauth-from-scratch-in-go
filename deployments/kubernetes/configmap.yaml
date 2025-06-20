@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oauth-server-config
+  namespace: oauth-server
+data:
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "8080"
+  READ_TIMEOUT: "10s"
+  WRITE_TIMEOUT: "10s"
+  IDLE_TIMEOUT: "60s"
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_USER: "oauth_user"
+  DB_NAME: "oauth_server"
+  DB_SSL_MODE: "require"
+  ACCESS_TOKEN_TTL: "15m"
+  REFRESH_TOKEN_TTL: "168h"
+  AUTH_CODE_TTL: "10m"
+  RATE_LIMIT_REQUESTS: "1000"
+  RATE_LIMIT_WINDOW: "1m"
+  ALLOWED_ORIGINS: "*"

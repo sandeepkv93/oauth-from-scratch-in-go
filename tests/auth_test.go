@@ -235,6 +235,8 @@ func TestCreateAuthorizationCode(t *testing.T) {
 		"test-client",
 		"http://localhost:8080/callback",
 		[]string{"openid", "profile"},
+		"",
+		"",
 	)
 
 	if err != nil {

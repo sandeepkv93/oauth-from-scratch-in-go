@@ -30,15 +30,17 @@ type User struct {
 }
 
 type AuthorizationCode struct {
-	ID          uuid.UUID `json:"id" db:"id"`
-	Code        string    `json:"code" db:"code"`
-	ClientID    string    `json:"client_id" db:"client_id"`
-	UserID      uuid.UUID `json:"user_id" db:"user_id"`
-	RedirectURI string    `json:"redirect_uri" db:"redirect_uri"`
-	Scopes      []string  `json:"scopes" db:"scopes"`
-	ExpiresAt   time.Time `json:"expires_at" db:"expires_at"`
-	Used        bool      `json:"used" db:"used"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	ID                uuid.UUID `json:"id" db:"id"`
+	Code              string    `json:"code" db:"code"`
+	ClientID          string    `json:"client_id" db:"client_id"`
+	UserID            uuid.UUID `json:"user_id" db:"user_id"`
+	RedirectURI       string    `json:"redirect_uri" db:"redirect_uri"`
+	Scopes            []string  `json:"scopes" db:"scopes"`
+	CodeChallenge     string    `json:"code_challenge,omitempty" db:"code_challenge"`
+	CodeChallengeMethod string  `json:"code_challenge_method,omitempty" db:"code_challenge_method"`
+	ExpiresAt         time.Time `json:"expires_at" db:"expires_at"`
+	Used              bool      `json:"used" db:"used"`
+	CreatedAt         time.Time `json:"created_at" db:"created_at"`
 }
 
 type AccessToken struct {

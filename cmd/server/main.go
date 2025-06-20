@@ -15,6 +15,8 @@ import (
 	"oauth-server/internal/db"
 	"oauth-server/internal/handlers"
 	"oauth-server/internal/middleware"
+	"oauth-server/internal/monitoring"
+	"oauth-server/internal/oidc"
 	"oauth-server/pkg/jwt"
 )
 
@@ -29,9 +31,11 @@ func main() {
 
 	jwtManager := jwt.NewManager(cfg.Auth.JWTSecret)
 	authService := auth.NewService(database, jwtManager, cfg)
+	metricsService := monitoring.NewService()
+	oidcService := oidc.NewService(jwtManager, "http://"+cfg.Server.Host+":"+cfg.Server.Port)
 	
 	handler := handlers.NewHandler(authService, database)
-	middlewareManager := middleware.NewMiddleware(authService)
+	middlewareManager := middleware.NewMiddleware(authService, metricsService)
 	
 	router := mux.NewRouter()
 	
@@ -43,8 +47,10 @@ func main() {
 	
 	handler.RegisterRoutes(router)
 	
-	router.HandleFunc("/health", healthCheck).Methods("GET")
-	router.HandleFunc("/.well-known/oauth-authorization-server", wellKnownEndpoint(cfg)).Methods("GET")
+	router.HandleFunc("/health", metricsService.ServeHealthCheck).Methods("GET")
+	router.HandleFunc("/metrics", metricsService.ServeMetrics).Methods("GET")
+	router.HandleFunc("/.well-known/oauth-authorization-server", wellKnownOIDCEndpoint(oidcService, cfg)).Methods("GET")
+	router.HandleFunc("/.well-known/openid-configuration", wellKnownOIDCEndpoint(oidcService, cfg)).Methods("GET")
 	
 	srv := &http.Server{
 		Addr:         cfg.Server.Host + ":" + cfg.Server.Port,
@@ -76,28 +82,12 @@ func main() {
 	log.Println("Server exited")
 }
 
-func healthCheck(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"healthy","timestamp":"` + time.Now().Format(time.RFC3339) + `"}`))
-}
 
-func wellKnownEndpoint(cfg *config.Config) http.HandlerFunc {
+func wellKnownOIDCEndpoint(oidcService *oidc.Service, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		baseURL := "http://" + cfg.Server.Host + ":" + cfg.Server.Port
 		
-		response := map[string]interface{}{
-			"issuer":                        baseURL,
-			"authorization_endpoint":        baseURL + "/authorize",
-			"token_endpoint":               baseURL + "/token",
-			"userinfo_endpoint":            baseURL + "/userinfo",
-			"introspection_endpoint":       baseURL + "/introspect",
-			"response_types_supported":     []string{"code"},
-			"grant_types_supported":        []string{"authorization_code", "refresh_token", "client_credentials"},
-			"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
-			"scopes_supported":             []string{"openid", "profile", "email", "read", "write"},
-			"claims_supported":             []string{"sub", "username", "email"},
-		}
+		response := oidcService.GetWellKnownConfiguration(baseURL)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

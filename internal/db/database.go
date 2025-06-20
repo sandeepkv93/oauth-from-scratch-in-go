@@ -81,6 +81,8 @@ func (d *Database) createTables() error {
 			user_id UUID NOT NULL REFERENCES users(id),
 			redirect_uri VARCHAR(512) NOT NULL,
 			scopes TEXT[] DEFAULT '{}',
+			code_challenge VARCHAR(128),
+			code_challenge_method VARCHAR(10),
 			expires_at TIMESTAMP NOT NULL,
 			used BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT NOW()
@@ -201,12 +203,13 @@ func (d *Database) GetClientByID(clientID string) (*Client, error) {
 }
 
 func (d *Database) CreateAuthorizationCode(code *AuthorizationCode) error {
-	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, expires_at) 
-			  VALUES ($1, $2, $3, $4, $5, $6) 
+	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
 			  RETURNING id, created_at`
 	
 	err := d.db.QueryRow(query, code.Code, code.ClientID, code.UserID,
-		code.RedirectURI, pq.Array(code.Scopes), code.ExpiresAt).Scan(
+		code.RedirectURI, pq.Array(code.Scopes), code.CodeChallenge, 
+		code.CodeChallengeMethod, code.ExpiresAt).Scan(
 		&code.ID, &code.CreatedAt)
 	
 	return err
@@ -214,13 +217,14 @@ func (d *Database) CreateAuthorizationCode(code *AuthorizationCode) error {
 
 func (d *Database) GetAuthorizationCode(code string) (*AuthorizationCode, error) {
 	authCode := &AuthorizationCode{}
-	query := `SELECT id, code, client_id, user_id, redirect_uri, scopes, expires_at, used, created_at 
+	query := `SELECT id, code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at, used, created_at 
 			  FROM authorization_codes WHERE code = $1 AND NOT used AND expires_at > NOW()`
 	
 	var scopes pq.StringArray
 	err := d.db.QueryRow(query, code).Scan(
 		&authCode.ID, &authCode.Code, &authCode.ClientID, &authCode.UserID,
-		&authCode.RedirectURI, &scopes, &authCode.ExpiresAt, &authCode.Used,
+		&authCode.RedirectURI, &scopes, &authCode.CodeChallenge, 
+		&authCode.CodeChallengeMethod, &authCode.ExpiresAt, &authCode.Used,
 		&authCode.CreatedAt)
 	
 	if err != nil {

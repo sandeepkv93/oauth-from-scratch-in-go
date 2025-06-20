@@ -35,6 +35,7 @@ func (h *Handler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/token", h.Token).Methods("POST")
 	r.HandleFunc("/introspect", h.Introspect).Methods("POST")
 	r.HandleFunc("/userinfo", h.UserInfo).Methods("GET")
+	r.HandleFunc("/revoke", h.Revoke).Methods("POST")
 	r.HandleFunc("/login", h.Login).Methods("GET", "POST")
 	
 	apiRouter := r.PathPrefix("/api").Subrouter()
@@ -58,6 +59,8 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 	scope := r.URL.Query().Get("scope")
 	state := r.URL.Query().Get("state")
 	responseType := r.URL.Query().Get("response_type")
+	codeChallenge := r.URL.Query().Get("code_challenge")
+	codeChallengeMethod := r.URL.Query().Get("code_challenge_method")
 
 	if responseType != "code" {
 		http.Error(w, "unsupported_response_type", http.StatusBadRequest)
@@ -125,6 +128,8 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
         <input type="hidden" name="scope" value="{{.Scope}}">
         <input type="hidden" name="state" value="{{.State}}">
         <input type="hidden" name="response_type" value="code">
+        <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
+        <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
         
         <div class="form-group">
             <label for="username">Username:</label>
@@ -144,19 +149,23 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 
 	t, _ := template.New("authorize").Parse(tmpl)
 	data := struct {
-		ClientID    string
-		ClientName  string
-		RedirectURI string
-		Scope       string
-		Scopes      []string
-		State       string
+		ClientID            string
+		ClientName          string
+		RedirectURI         string
+		Scope               string
+		Scopes              []string
+		State               string
+		CodeChallenge       string
+		CodeChallengeMethod string
 	}{
-		ClientID:    clientID,
-		ClientName:  client.Name,
-		RedirectURI: redirectURI,
-		Scope:       scope,
-		Scopes:      scopes,
-		State:       state,
+		ClientID:            clientID,
+		ClientName:          client.Name,
+		RedirectURI:         redirectURI,
+		Scope:               scope,
+		Scopes:              scopes,
+		State:               state,
+		CodeChallenge:       codeChallenge,
+		CodeChallengeMethod: codeChallengeMethod,
 	}
 	
 	t.Execute(w, data)
@@ -172,6 +181,8 @@ func (h *Handler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 	state := r.FormValue("state")
 	username := r.FormValue("username")
 	password := r.FormValue("password")
+	codeChallenge := r.FormValue("code_challenge")
+	codeChallengeMethod := r.FormValue("code_challenge_method")
 
 	if action == "deny" {
 		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "access_denied", "User denied the request", state)
@@ -191,7 +202,7 @@ func (h *Handler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 		scopes = strings.Split(scope, " ")
 	}
 
-	code, err := h.auth.CreateAuthorizationCode(user.ID, clientID, redirectURI, scopes)
+	code, err := h.auth.CreateAuthorizationCode(user.ID, clientID, redirectURI, scopes, codeChallenge, codeChallengeMethod)
 	if err != nil {
 		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "server_error", "Failed to create authorization code", state)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
@@ -215,6 +226,7 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		ClientSecret: r.FormValue("client_secret"),
 		RefreshToken: r.FormValue("refresh_token"),
 		Scope:        r.FormValue("scope"),
+		CodeVerifier: r.FormValue("code_verifier"),
 	}
 
 	var response *auth.TokenResponse
@@ -518,6 +530,12 @@ func (h *Handler) handleTokenError(w http.ResponseWriter, err error) {
 		h.sendError(w, "invalid_grant", "Authorization code expired", http.StatusBadRequest)
 	case auth.ErrUsedCode:
 		h.sendError(w, "invalid_grant", "Authorization code already used", http.StatusBadRequest)
+	case auth.ErrInvalidCodeChallenge:
+		h.sendError(w, "invalid_request", "Invalid code challenge", http.StatusBadRequest)
+	case auth.ErrInvalidCodeVerifier:
+		h.sendError(w, "invalid_request", "Invalid code verifier", http.StatusBadRequest)
+	case auth.ErrCodeChallengeMismatch:
+		h.sendError(w, "invalid_grant", "Code challenge verification failed", http.StatusBadRequest)
 	default:
 		h.sendError(w, "server_error", "Internal server error", http.StatusInternalServerError)
 	}

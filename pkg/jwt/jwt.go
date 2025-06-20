@@ -99,3 +99,7 @@ func (m *Manager) GenerateClientSecret() (string, error) {
 	}
 	return base64.URLEncoding.EncodeToString(bytes), nil
 }
+
+func (m *Manager) SignToken(token *jwt.Token) (string, error) {
+	return token.SignedString(m.secret)
+}

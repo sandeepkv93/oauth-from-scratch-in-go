@@ -11,31 +11,38 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
+	"oauth-server/pkg/crypto"
 	"oauth-server/pkg/jwt"
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrInvalidClient      = errors.New("invalid client")
-	ErrInvalidGrant       = errors.New("invalid grant")
-	ErrInvalidScope       = errors.New("invalid scope")
-	ErrInvalidRedirectURI = errors.New("invalid redirect URI")
-	ErrExpiredCode        = errors.New("authorization code expired")
-	ErrUsedCode           = errors.New("authorization code already used")
+	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrInvalidClient          = errors.New("invalid client")
+	ErrInvalidGrant           = errors.New("invalid grant")
+	ErrInvalidScope           = errors.New("invalid scope")
+	ErrInvalidRedirectURI     = errors.New("invalid redirect URI")
+	ErrExpiredCode            = errors.New("authorization code expired")
+	ErrUsedCode               = errors.New("authorization code already used")
+	ErrInvalidCodeChallenge   = errors.New("invalid code challenge")
+	ErrInvalidCodeVerifier    = errors.New("invalid code verifier")
+	ErrCodeChallengeMismatch  = errors.New("code challenge verification failed")
 )
 
 type Service struct {
 	db       db.DatabaseInterface
 	jwt      *jwt.Manager
+	pkce     *crypto.PKCEManager
 	config   *config.Config
 }
 
 type AuthorizeRequest struct {
-	ResponseType string `json:"response_type"`
-	ClientID     string `json:"client_id"`
-	RedirectURI  string `json:"redirect_uri"`
-	Scope        string `json:"scope"`
-	State        string `json:"state"`
+	ResponseType        string `json:"response_type"`
+	ClientID            string `json:"client_id"`
+	RedirectURI         string `json:"redirect_uri"`
+	Scope               string `json:"scope"`
+	State               string `json:"state"`
+	CodeChallenge       string `json:"code_challenge"`
+	CodeChallengeMethod string `json:"code_challenge_method"`
 }
 
 type TokenRequest struct {
@@ -46,6 +53,7 @@ type TokenRequest struct {
 	ClientSecret string `json:"client_secret,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+	CodeVerifier string `json:"code_verifier,omitempty"`
 }
 
 type TokenResponse struct {
@@ -60,6 +68,7 @@ func NewService(database db.DatabaseInterface, jwtManager *jwt.Manager, cfg *con
 	return &Service{
 		db:     database,
 		jwt:    jwtManager,
+		pkce:   crypto.NewPKCEManager(),
 		config: cfg,
 	}
 }
@@ -121,19 +130,30 @@ func (s *Service) ValidateScopes(requestedScopes []string, allowedScopes []strin
 	return nil
 }
 
-func (s *Service) CreateAuthorizationCode(userID uuid.UUID, clientID, redirectURI string, scopes []string) (string, error) {
+func (s *Service) CreateAuthorizationCode(userID uuid.UUID, clientID, redirectURI string, scopes []string, codeChallenge, codeChallengeMethod string) (string, error) {
 	code, err := s.jwt.GenerateAuthorizationCode()
 	if err != nil {
 		return "", err
 	}
 
+	if codeChallenge != "" {
+		if !s.pkce.IsValidCodeChallenge(codeChallenge) {
+			return "", ErrInvalidCodeChallenge
+		}
+		if !s.pkce.IsSupportedMethod(codeChallengeMethod) {
+			return "", ErrInvalidCodeChallenge
+		}
+	}
+
 	authCode := &db.AuthorizationCode{
-		Code:        code,
-		ClientID:    clientID,
-		UserID:      userID,
-		RedirectURI: redirectURI,
-		Scopes:      scopes,
-		ExpiresAt:   time.Now().Add(s.config.Auth.AuthorizationCodeTTL),
+		Code:                code,
+		ClientID:            clientID,
+		UserID:              userID,
+		RedirectURI:         redirectURI,
+		Scopes:              scopes,
+		CodeChallenge:       codeChallenge,
+		CodeChallengeMethod: codeChallengeMethod,
+		ExpiresAt:           time.Now().Add(s.config.Auth.AuthorizationCodeTTL),
 	}
 
 	if err := s.db.CreateAuthorizationCode(authCode); err != nil {
@@ -168,6 +188,18 @@ func (s *Service) ExchangeCodeForToken(req *TokenRequest) (*TokenResponse, error
 
 	if authCode.RedirectURI != req.RedirectURI {
 		return nil, ErrInvalidRedirectURI
+	}
+
+	if authCode.CodeChallenge != "" {
+		if req.CodeVerifier == "" {
+			return nil, ErrInvalidCodeVerifier
+		}
+		
+		if err := s.pkce.VerifyCodeChallenge(req.CodeVerifier, authCode.CodeChallenge, authCode.CodeChallengeMethod); err != nil {
+			return nil, ErrCodeChallengeMismatch
+		}
+	} else if client.IsPublic {
+		return nil, ErrInvalidCodeChallenge
 	}
 
 	if err := s.db.MarkAuthorizationCodeUsed(req.Code); err != nil {
