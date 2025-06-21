@@ -44,6 +44,9 @@ A production-ready OAuth 2.0 authorization server implementation built from scra
 
 ## Quick Start
 
+> **📦 New: Task-based Build System**  
+> This project now uses [Taskfile](https://taskfile.dev/) for build automation, providing better cross-platform support and enhanced developer experience. The traditional Makefile is still supported but deprecated. See [TASKFILE_MIGRATION.md](TASKFILE_MIGRATION.md) for migration details.
+
 ### Prerequisites
 
 - Go 1.24+
@@ -58,44 +61,99 @@ A production-ready OAuth 2.0 authorization server implementation built from scra
    cd oauth-from-scratch-in-go
    ```
 
-2. **Install dependencies**:
+2. **Install Task (recommended) or use Make**:
    ```bash
-   make deps
+   # Install Task (modern build tool)
+   sh -c "$(curl -ssL https://taskfile.dev/install.sh)"
+   # OR use the project's self-install
+   task install:taskfile
+   
+   # Alternative: Use traditional Make (deprecated)
+   # make deps
    ```
 
-3. **Setup environment**:
+3. **Install dependencies**:
+   ```bash
+   task deps          # Using Task (recommended)
+   # OR make deps     # Using Make (deprecated)
+   ```
+
+4. **Setup environment**:
    ```bash
    cp .env.example .env
    # Edit .env with your configuration
    ```
 
-4. **Setup database**:
+5. **Setup database**:
    ```bash
    # Create PostgreSQL database
    createdb oauth_server
    
    # Run setup script
-   make setup-db
+   task db:setup      # Using Task (recommended)
+   # OR make setup-db # Using Make (deprecated)
    ```
 
-5. **Build and run**:
+6. **Build and run**:
    ```bash
-   make build
-   make run
+   task build && task run    # Using Task (recommended)
+   # OR make build && make run # Using Make (deprecated)
+   
+   # Quick development run (no build step)
+   task run:dev
    ```
 
 The server will start on `http://localhost:8080`
+
+### Development Commands
+
+```bash
+# View all available tasks
+task --list
+
+# Development workflow
+task run:dev           # Run with hot reload
+task run:watch         # Run with file watching (requires air)
+task test              # Run all tests
+task test:unit         # Run unit tests only
+task test:coverage     # Run tests with coverage report
+task fmt               # Format code
+task lint              # Run linter
+task check             # Run all checks (fmt, lint, security, test)
+
+# Database operations
+task db:setup          # Setup database
+task db:migrate        # Run migrations
+task db:reset          # Reset database
+
+# Git operations
+task git:hooks:install # Install git hooks
+task git:tag:create TAG=v1.0.0  # Create and push tag
+
+# Kubernetes deployment
+task k8s:deploy        # Deploy to Kubernetes
+task k8s:status        # Check deployment status
+task k8s:logs          # View application logs
+
+# Build for multiple platforms
+task release           # Build release binaries
+```
 
 ### Docker Deployment
 
 1. **Build Docker image**:
    ```bash
-   make docker-build
+   task docker:build     # Using Task (recommended)
+   # OR make docker-build # Using Make (deprecated)
    ```
 
 2. **Run with Docker**:
    ```bash
-   make docker-run
+   task docker:run       # Using Task (recommended)
+   # OR make docker-run  # Using Make (deprecated)
+   
+   # Run with environment file
+   task docker:run:env
    ```
 
 ## OAuth 2.0 Flows

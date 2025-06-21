@@ -1,0 +1,73 @@
+version: '3'
+
+tasks:
+  deploy:
+    desc: Deploy to Kubernetes
+    cmds:
+      - kubectl apply -f deployments/kubernetes/
+    preconditions:
+      - sh: command -v kubectl
+        msg: "kubectl is not installed"
+      - sh: test -d deployments/kubernetes
+        msg: "Kubernetes deployment files not found"
+
+  deploy:dev:
+    desc: Deploy to development namespace
+    cmds:
+      - kubectl apply -f deployments/kubernetes/ -n oauth-dev
+    preconditions:
+      - sh: command -v kubectl
+        msg: "kubectl is not installed"
+
+  deploy:prod:
+    desc: Deploy to production namespace
+    cmds:
+      - kubectl apply -f deployments/kubernetes/ -n oauth-prod
+    preconditions:
+      - sh: command -v kubectl
+        msg: "kubectl is not installed"
+
+  status:
+    desc: Check deployment status
+    cmds:
+      - kubectl get pods,svc,ingress -l app=oauth-server
+
+  logs:
+    desc: View application logs
+    cmds:
+      - kubectl logs -l app=oauth-server --tail=100 -f
+
+  delete:
+    desc: Delete Kubernetes deployment
+    cmds:
+      - kubectl delete -f deployments/kubernetes/
+
+  port-forward:
+    desc: Port forward to local machine
+    cmds:
+      - kubectl port-forward svc/oauth-server 8080:8080
+
+  scale:
+    desc: Scale the deployment
+    cmds:
+      - kubectl scale deployment oauth-server --replicas={{.REPLICAS | default "3"}}
+
+  rollout:restart:
+    desc: Restart deployment (rolling update)
+    cmds:
+      - kubectl rollout restart deployment/oauth-server
+
+  rollout:status:
+    desc: Check rollout status
+    cmds:
+      - kubectl rollout status deployment/oauth-server
+
+  secret:create:
+    desc: Create secrets from .env file
+    cmds:
+      - |
+        if [ -f .env ]; then
+          kubectl create secret generic oauth-server-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+        else
+          echo "No .env file found"
+        fi

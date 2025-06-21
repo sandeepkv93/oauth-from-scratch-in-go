@@ -1,0 +1,66 @@
+version: '3'
+
+tasks:
+  hooks:install:
+    desc: Install Git hooks
+    cmds:
+      - mkdir -p .git/hooks
+      - |
+        cat > .git/hooks/pre-commit << 'EOF'
+        #!/bin/sh
+        echo "Running pre-commit checks..."
+        task fmt lint test
+        EOF
+      - chmod +x .git/hooks/pre-commit
+      - |
+        cat > .git/hooks/pre-push << 'EOF'
+        #!/bin/sh
+        echo "Running pre-push checks..."
+        task ci
+        EOF
+      - chmod +x .git/hooks/pre-push
+      - echo "Git hooks installed successfully"
+
+  hooks:remove:
+    desc: Remove Git hooks
+    cmds:
+      - rm -f .git/hooks/pre-commit .git/hooks/pre-push
+      - echo "Git hooks removed"
+
+  clean:branches:
+    desc: Clean up merged branches
+    cmds:
+      - git branch --merged | grep -v "\*\|main\|master" | xargs -n 1 git branch -d || echo "No branches to clean"
+
+  tag:create:
+    desc: Create and push a new tag
+    cmds:
+      - |
+        if [ -z "{{.TAG}}" ]; then
+          echo "Usage: task git:tag:create TAG=v1.0.0"
+          exit 1
+        fi
+        git tag -a {{.TAG}} -m "Release {{.TAG}}"
+        git push origin {{.TAG}}
+        echo "Tag {{.TAG}} created and pushed"
+
+  tag:delete:
+    desc: Delete a tag locally and remotely
+    cmds:
+      - |
+        if [ -z "{{.TAG}}" ]; then
+          echo "Usage: task git:tag:delete TAG=v1.0.0"
+          exit 1
+        fi
+        git tag -d {{.TAG}}
+        git push origin :refs/tags/{{.TAG}}
+        echo "Tag {{.TAG}} deleted"
+
+  changelog:
+    desc: Generate changelog from git commits
+    cmds:
+      - |
+        echo "# Changelog" > CHANGELOG.md
+        echo "" >> CHANGELOG.md
+        git log --oneline --pretty=format:"- %s (%an)" --since="1 month ago" >> CHANGELOG.md
+        echo "Changelog generated in CHANGELOG.md"

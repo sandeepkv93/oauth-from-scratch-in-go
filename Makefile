@@ -1,4 +1,15 @@
 # OAuth Server Makefile
+# 
+# ⚠️  DEPRECATED: This Makefile is deprecated in favor of Taskfile.yml
+# Please use 'task' command instead of 'make'
+# 
+# Migration guide:
+#   make build    -> task build
+#   make test     -> task test
+#   make run      -> task run
+# 
+# Install Task: sh -c "$(curl -ssL https://taskfile.dev/install.sh)"
+# See TASKFILE_MIGRATION.md for complete migration guide
 
 .PHONY: build run test clean setup docker-build docker-run deps
 

@@ -1,0 +1,309 @@
+version: '3'
+
+includes:
+  k8s: .taskfile/k8s.yml
+  git: .taskfile/git.yml
+
+vars:
+  APP_NAME: oauth-server
+  BUILD_DIR: bin
+  DOCKER_IMAGE: oauth-server
+  COVERAGE_FILE: coverage.out
+  COVERAGE_HTML: coverage.html
+
+env:
+  CGO_ENABLED: 0
+  GOOS: '{{OS}}'
+  GOARCH: '{{ARCH}}'
+
+tasks:
+  default:
+    desc: Install dependencies and build the application
+    deps: [deps, build]
+
+  deps:
+    desc: Install and tidy Go dependencies
+    cmds:
+      - go mod tidy
+      - go mod download
+    sources:
+      - go.mod
+      - go.sum
+
+  build:
+    desc: Build the OAuth server binary
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -ldflags "-s -w" -o {{.BUILD_DIR}}/{{.APP_NAME}} ./cmd/server
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BUILD_DIR}}/{{.APP_NAME}}"
+
+  build-race:
+    desc: Build with race detector enabled
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -race -o {{.BUILD_DIR}}/{{.APP_NAME}}-race ./cmd/server
+    sources:
+      - "**/*.go"
+    generates:
+      - "{{.BUILD_DIR}}/{{.APP_NAME}}-race"
+
+  run:
+    desc: Run the OAuth server
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.APP_NAME}}
+
+  run-dev:
+    desc: Run the server directly with go run
+    cmds:
+      - go run ./cmd/server
+
+  run-env:
+    desc: Run the server with environment variables from .env file
+    deps: [build]
+    cmds:
+      - |
+        if [ -f .env ]; then
+          export $(cat .env | xargs) && ./{{.BUILD_DIR}}/{{.APP_NAME}}
+        else
+          echo "No .env file found, running with defaults"
+          ./{{.BUILD_DIR}}/{{.APP_NAME}}
+        fi
+
+  run-watch:
+    desc: Run development server with auto-reload (requires air)
+    cmds:
+      - air
+    preconditions:
+      - sh: command -v air
+        msg: "air is not installed. Run 'task install-tools' first."
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test -v ./...
+    sources:
+      - "**/*.go"
+
+  test-unit:
+    desc: Run only unit tests
+    cmds:
+      - go test -v ./tests/
+
+  test-integration:
+    desc: Run only integration tests
+    cmds:
+      - go test -v ./tests/ -run Integration
+
+  test-coverage:
+    desc: Run tests with coverage report
+    cmds:
+      - go test -v -coverprofile={{.COVERAGE_FILE}} -covermode=atomic ./...
+      - go tool cover -html={{.COVERAGE_FILE}} -o {{.COVERAGE_HTML}}
+      - echo "Coverage report generated at {{.COVERAGE_HTML}}"
+    generates:
+      - "{{.COVERAGE_FILE}}"
+      - "{{.COVERAGE_HTML}}"
+
+  test-bench:
+    desc: Run benchmark tests
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  test-race:
+    desc: Run tests with race detector
+    cmds:
+      - go test -race -v ./...
+
+  test-oauth:
+    desc: Run OAuth flow integration tests
+    cmds:
+      - chmod +x scripts/test_oauth.sh
+      - ./scripts/test_oauth.sh
+    preconditions:
+      - sh: test -f scripts/test_oauth.sh
+        msg: "OAuth test script not found"
+
+  clean:
+    desc: Clean build artifacts and temporary files
+    cmds:
+      - rm -rf {{.BUILD_DIR}}/
+      - rm -f {{.COVERAGE_FILE}} {{.COVERAGE_HTML}}
+      - go clean -cache
+      - go clean -testcache
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+      - goimports -w . || echo "goimports not available, skipping"
+
+  lint:
+    desc: Run code linting
+    cmds:
+      - golangci-lint run --timeout=5m
+    preconditions:
+      - sh: command -v golangci-lint
+        msg: "golangci-lint is not installed. Run 'task install-tools' first."
+
+  lint-fix:
+    desc: Run linting with auto-fix
+    cmds:
+      - golangci-lint run --fix --timeout=5m
+    preconditions:
+      - sh: command -v golangci-lint
+        msg: "golangci-lint is not installed. Run 'task install-tools' first."
+
+  security:
+    desc: Run security scan
+    cmds:
+      - gosec -fmt=json -out=gosec-report.json -stdout ./...
+    preconditions:
+      - sh: command -v gosec
+        msg: "gosec is not installed. Run 'task install-tools' first."
+
+  docker-build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t {{.DOCKER_IMAGE}}:latest .
+      - docker tag {{.DOCKER_IMAGE}}:latest {{.DOCKER_IMAGE}}:$(git rev-parse --short HEAD)
+
+  docker-run:
+    desc: Run Docker container
+    deps: [docker-build]
+    cmds:
+      - docker run -p 8080:8080 --rm {{.DOCKER_IMAGE}}:latest
+
+  docker-run-env:
+    desc: Run Docker container with environment file
+    deps: [docker-build]
+    cmds:
+      - |
+        if [ -f .env ]; then
+          docker run --env-file .env -p 8080:8080 --rm {{.DOCKER_IMAGE}}:latest
+        else
+          echo "No .env file found, running with defaults"
+          docker run -p 8080:8080 --rm {{.DOCKER_IMAGE}}:latest
+        fi
+
+  docker-shell:
+    desc: Run interactive shell in Docker container
+    deps: [docker-build]
+    cmds:
+      - docker run -it --rm {{.DOCKER_IMAGE}}:latest /bin/sh
+
+  db-setup:
+    desc: Setup PostgreSQL database
+    cmds:
+      - createdb oauth_server 2>/dev/null || echo "Database already exists"
+      - psql -d oauth_server -f scripts/setup.sql
+    preconditions:
+      - sh: command -v createdb
+        msg: "PostgreSQL is not installed or not in PATH"
+      - sh: test -f scripts/setup.sql
+        msg: "Database setup script not found"
+
+  db-migrate:
+    desc: Run database migrations
+    cmds:
+      - psql -d oauth_server -f scripts/migrate.sql
+    preconditions:
+      - sh: command -v psql
+        msg: "PostgreSQL client is not installed"
+      - sh: test -f scripts/migrate.sql
+        msg: "Migration script not found"
+
+  db-reset:
+    desc: Reset database (drop and recreate)
+    cmds:
+      - dropdb oauth_server 2>/dev/null || echo "Database doesn't exist"
+      - task db-setup
+
+  certs-generate:
+    desc: Generate self-signed certificates for HTTPS
+    cmds:
+      - mkdir -p certs
+      - |
+        openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+          -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" \
+          -keyout certs/server.key -out certs/server.crt
+      - echo "Certificates generated in certs/ directory"
+    generates:
+      - certs/server.key
+      - certs/server.crt
+
+  install-tools:
+    desc: Install development tools
+    cmds:
+      - go install github.com/cosmtrek/air@latest
+      - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+      - go install golang.org/x/tools/cmd/goimports@latest
+      - echo "Development tools installed successfully"
+
+  install-taskfile:
+    desc: Install Task globally (if not already installed)
+    cmds:
+      - |
+        if ! command -v task >/dev/null 2>&1; then
+          echo "Installing Task..."
+          sh -c "$(curl -ssL https://taskfile.dev/install.sh)"
+        else
+          echo "Task is already installed: $(task --version)"
+        fi
+
+  check:
+    desc: Run all checks (format, lint, security, test)
+    deps: [fmt, lint, security, test]
+
+  ci:
+    desc: Run CI pipeline (used in GitHub Actions)
+    cmds:
+      - task deps
+      - task fmt
+      - task lint
+      - task security
+      - task test-coverage
+      - task build
+
+  load-test:
+    desc: Run load testing
+    cmds:
+      - chmod +x scripts/load_test.sh
+      - ./scripts/load_test.sh
+    preconditions:
+      - sh: test -f scripts/load_test.sh
+        msg: "Load test script not found"
+
+  docs-serve:
+    desc: Serve documentation locally
+    cmds:
+      - |
+        if command -v godoc >/dev/null 2>&1; then
+          echo "Starting documentation server at http://localhost:6060"
+          godoc -http=:6060
+        else
+          echo "godoc not found. Install with: go install golang.org/x/tools/cmd/godoc@latest"
+        fi
+
+  release:
+    desc: Build release binaries for multiple platforms
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}/release
+      - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/release/{{.APP_NAME}}-linux-amd64 ./cmd/server
+      - GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/release/{{.APP_NAME}}-linux-arm64 ./cmd/server
+      - GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/release/{{.APP_NAME}}-darwin-amd64 ./cmd/server
+      - GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/release/{{.APP_NAME}}-darwin-arm64 ./cmd/server
+      - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o {{.BUILD_DIR}}/release/{{.APP_NAME}}-windows-amd64.exe ./cmd/server
+      - echo "Release binaries built in {{.BUILD_DIR}}/release/"
+
+  help:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
