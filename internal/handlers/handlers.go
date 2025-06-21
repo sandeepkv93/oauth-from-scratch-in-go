@@ -270,6 +270,13 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dbToken, err := h.db.GetAccessToken(token)
+	if err != nil || dbToken.Revoked {
+		response := map[string]interface{}{"active": false}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	response := map[string]interface{}{
 		"active":    true,
 		"client_id": claims.ClientID,
@@ -298,6 +305,12 @@ func (h *Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 	claims, err := h.auth.ValidateAccessToken(token)
 	if err != nil {
 		h.sendError(w, "invalid_token", "Token is invalid", http.StatusUnauthorized)
+		return
+	}
+
+	dbToken, err := h.db.GetAccessToken(token)
+	if err != nil || dbToken.Revoked {
+		h.sendError(w, "invalid_token", "Token has been revoked", http.StatusUnauthorized)
 		return
 	}
 

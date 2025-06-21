@@ -13,7 +13,7 @@ import (
 )
 
 // Mock database for testing
-type mockDB struct {
+type MockDB struct {
 	users  map[string]*db.User
 	clients map[string]*db.Client
 	codes   map[string]*db.AuthorizationCode
@@ -21,8 +21,8 @@ type mockDB struct {
 	refreshTokens map[string]*db.RefreshToken
 }
 
-func newMockDB() *mockDB {
-	return &mockDB{
+func NewMockDatabase() *MockDB {
+	return &MockDB{
 		users:         make(map[string]*db.User),
 		clients:       make(map[string]*db.Client),
 		codes:         make(map[string]*db.AuthorizationCode),
@@ -31,7 +31,7 @@ func newMockDB() *mockDB {
 	}
 }
 
-func (m *mockDB) CreateUser(user *db.User) error {
+func (m *MockDB) CreateUser(user *db.User) error {
 	user.ID = uuid.New()
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
@@ -39,14 +39,14 @@ func (m *mockDB) CreateUser(user *db.User) error {
 	return nil
 }
 
-func (m *mockDB) GetUserByUsername(username string) (*db.User, error) {
+func (m *MockDB) GetUserByUsername(username string) (*db.User, error) {
 	if user, exists := m.users[username]; exists {
 		return user, nil
 	}
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *mockDB) GetUserByID(id uuid.UUID) (*db.User, error) {
+func (m *MockDB) GetUserByID(id uuid.UUID) (*db.User, error) {
 	for _, user := range m.users {
 		if user.ID == id {
 			return user, nil
@@ -55,7 +55,7 @@ func (m *mockDB) GetUserByID(id uuid.UUID) (*db.User, error) {
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *mockDB) CreateClient(client *db.Client) error {
+func (m *MockDB) CreateClient(client *db.Client) error {
 	client.ID = uuid.New()
 	client.CreatedAt = time.Now()
 	client.UpdatedAt = time.Now()
@@ -63,28 +63,28 @@ func (m *mockDB) CreateClient(client *db.Client) error {
 	return nil
 }
 
-func (m *mockDB) GetClientByID(clientID string) (*db.Client, error) {
+func (m *MockDB) GetClientByID(clientID string) (*db.Client, error) {
 	if client, exists := m.clients[clientID]; exists {
 		return client, nil
 	}
 	return nil, auth.ErrInvalidClient
 }
 
-func (m *mockDB) CreateAuthorizationCode(code *db.AuthorizationCode) error {
+func (m *MockDB) CreateAuthorizationCode(code *db.AuthorizationCode) error {
 	code.ID = uuid.New()
 	code.CreatedAt = time.Now()
 	m.codes[code.Code] = code
 	return nil
 }
 
-func (m *mockDB) GetAuthorizationCode(code string) (*db.AuthorizationCode, error) {
+func (m *MockDB) GetAuthorizationCode(code string) (*db.AuthorizationCode, error) {
 	if authCode, exists := m.codes[code]; exists && !authCode.Used && authCode.ExpiresAt.After(time.Now()) {
 		return authCode, nil
 	}
 	return nil, auth.ErrExpiredCode
 }
 
-func (m *mockDB) MarkAuthorizationCodeUsed(code string) error {
+func (m *MockDB) MarkAuthorizationCodeUsed(code string) error {
 	if authCode, exists := m.codes[code]; exists {
 		authCode.Used = true
 		return nil
@@ -92,35 +92,35 @@ func (m *mockDB) MarkAuthorizationCodeUsed(code string) error {
 	return auth.ErrExpiredCode
 }
 
-func (m *mockDB) CreateAccessToken(token *db.AccessToken) error {
+func (m *MockDB) CreateAccessToken(token *db.AccessToken) error {
 	token.ID = uuid.New()
 	token.CreatedAt = time.Now()
 	m.accessTokens[token.Token] = token
 	return nil
 }
 
-func (m *mockDB) CreateRefreshToken(token *db.RefreshToken) error {
+func (m *MockDB) CreateRefreshToken(token *db.RefreshToken) error {
 	token.ID = uuid.New()
 	token.CreatedAt = time.Now()
 	m.refreshTokens[token.Token] = token
 	return nil
 }
 
-func (m *mockDB) GetAccessToken(token string) (*db.AccessToken, error) {
+func (m *MockDB) GetAccessToken(token string) (*db.AccessToken, error) {
 	if accessToken, exists := m.accessTokens[token]; exists && !accessToken.Revoked && accessToken.ExpiresAt.After(time.Now()) {
 		return accessToken, nil
 	}
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *mockDB) GetRefreshToken(token string) (*db.RefreshToken, error) {
+func (m *MockDB) GetRefreshToken(token string) (*db.RefreshToken, error) {
 	if refreshToken, exists := m.refreshTokens[token]; exists && !refreshToken.Revoked && refreshToken.ExpiresAt.After(time.Now()) {
 		return refreshToken, nil
 	}
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *mockDB) RevokeAccessToken(tokenID uuid.UUID) error {
+func (m *MockDB) RevokeAccessToken(tokenID uuid.UUID) error {
 	for _, token := range m.accessTokens {
 		if token.ID == tokenID {
 			token.Revoked = true
@@ -130,7 +130,7 @@ func (m *mockDB) RevokeAccessToken(tokenID uuid.UUID) error {
 	return nil
 }
 
-func (m *mockDB) RevokeRefreshToken(token string) error {
+func (m *MockDB) RevokeRefreshToken(token string) error {
 	if refreshToken, exists := m.refreshTokens[token]; exists {
 		refreshToken.Revoked = true
 		return nil
@@ -138,12 +138,12 @@ func (m *mockDB) RevokeRefreshToken(token string) error {
 	return nil
 }
 
-func (m *mockDB) Close() error {
+func (m *MockDB) Close() error {
 	return nil
 }
 
-func setupTestAuth() (*auth.Service, *mockDB) {
-	mockDatabase := newMockDB()
+func setupTestAuth() (*auth.Service, *MockDB) {
+	mockDatabase := NewMockDatabase()
 	
 	cfg := &config.Config{
 		Auth: config.AuthConfig{
