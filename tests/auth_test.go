@@ -70,6 +70,14 @@ func (m *MockDB) GetClientByID(clientID string) (*db.Client, error) {
 	return nil, auth.ErrInvalidClient
 }
 
+func (m *MockDB) GetAllClients() ([]*db.Client, error) {
+	clients := make([]*db.Client, 0, len(m.clients))
+	for _, client := range m.clients {
+		clients = append(clients, client)
+	}
+	return clients, nil
+}
+
 func (m *MockDB) CreateAuthorizationCode(code *db.AuthorizationCode) error {
 	code.ID = uuid.New()
 	code.CreatedAt = time.Now()
@@ -168,9 +176,10 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 	mockDatabase.CreateUser(testUser)
 
 	// Create test client
+	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
 	testClient := &db.Client{
 		ClientID:     "test-client",
-		ClientSecret: "test-secret",
+		ClientSecret: string(hashedSecret),
 		Name:         "Test Client",
 		RedirectURIs: []string{"http://localhost:8080/callback"},
 		Scopes:       []string{"openid", "profile", "email", "read", "write"},

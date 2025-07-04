@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net/url"
 	"strings"
@@ -97,7 +96,7 @@ func (s *Service) ValidateClient(clientID, clientSecret string) (*db.Client, err
 			return nil, ErrInvalidClient
 		}
 		
-		if subtle.ConstantTimeCompare([]byte(client.ClientSecret), []byte(clientSecret)) != 1 {
+		if err := bcrypt.CompareHashAndPassword([]byte(client.ClientSecret), []byte(clientSecret)); err != nil {
 			return nil, ErrInvalidClient
 		}
 	}

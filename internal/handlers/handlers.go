@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -54,13 +56,18 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
-	clientID := r.URL.Query().Get("client_id")
-	redirectURI := r.URL.Query().Get("redirect_uri")
-	scope := r.URL.Query().Get("scope")
-	state := r.URL.Query().Get("state")
-	responseType := r.URL.Query().Get("response_type")
-	codeChallenge := r.URL.Query().Get("code_challenge")
-	codeChallengeMethod := r.URL.Query().Get("code_challenge_method")
+	clientID := strings.TrimSpace(r.URL.Query().Get("client_id"))
+	redirectURI := strings.TrimSpace(r.URL.Query().Get("redirect_uri"))
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	responseType := strings.TrimSpace(r.URL.Query().Get("response_type"))
+	codeChallenge := strings.TrimSpace(r.URL.Query().Get("code_challenge"))
+	codeChallengeMethod := strings.TrimSpace(r.URL.Query().Get("code_challenge_method"))
+
+	if err := h.validateBasicParams(clientID, redirectURI, responseType); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if responseType != "code" {
 		http.Error(w, "unsupported_response_type", http.StatusBadRequest)
@@ -91,63 +98,168 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 
 	tmpl := `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Authorize Application</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        .client-info { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-        .scopes { background: #e9ecef; padding: 10px; border-radius: 4px; }
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            max-width: 600px; 
+            margin: 50px auto; 
+            padding: 20px; 
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h2 { 
+            color: #2c3e50; 
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .form-group { margin-bottom: 20px; }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 600;
+            color: #555;
+        }
+        input { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #e1e8ed; 
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+        }
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+        button { 
+            flex: 1;
+            padding: 12px 24px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .btn-authorize {
+            background: #28a745; 
+            color: white;
+        }
+        .btn-authorize:hover { 
+            background: #218838;
+            transform: translateY(-1px);
+        }
+        .btn-deny {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-deny:hover { 
+            background: #c82333;
+            transform: translateY(-1px);
+        }
+        .client-info { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 6px; 
+            margin-bottom: 25px;
+            border-left: 4px solid #007bff;
+        }
+        .client-info h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .scopes { 
+            background: #e7f3ff; 
+            padding: 15px; 
+            border-radius: 6px; 
+            margin-top: 15px;
+        }
+        .scopes ul {
+            margin: 10px 0 0 0;
+            padding-left: 20px;
+        }
+        .scopes li {
+            margin-bottom: 5px;
+            color: #495057;
+        }
+        @media (max-width: 600px) {
+            body { margin: 20px; padding: 15px; }
+            .container { padding: 20px; }
+            .button-group { flex-direction: column; }
+        }
     </style>
 </head>
 <body>
-    <h2>Authorize Application</h2>
-    <div class="client-info">
-        <h3>{{.ClientName}}</h3>
-        <p>This application is requesting access to your account.</p>
-        {{if .Scopes}}
-        <div class="scopes">
-            <strong>Requested permissions:</strong>
-            <ul>
-                {{range .Scopes}}
-                <li>{{.}}</li>
-                {{end}}
-            </ul>
+    <div class="container">
+        <h2>🔐 Authorize Application</h2>
+        <div class="client-info">
+            <h3>{{.ClientName}}</h3>
+            <p>This application is requesting access to your account. Please review the requested permissions below.</p>
+            {{if .Scopes}}
+            <div class="scopes">
+                <strong>📋 Requested permissions:</strong>
+                <ul>
+                    {{range .Scopes}}
+                    <li>{{.}}</li>
+                    {{end}}
+                </ul>
+            </div>
+            {{end}}
         </div>
-        {{end}}
+        
+        <form method="post">
+            <input type="hidden" name="client_id" value="{{.ClientID}}">
+            <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+            <input type="hidden" name="scope" value="{{.Scope}}">
+            <input type="hidden" name="state" value="{{.State}}">
+            <input type="hidden" name="response_type" value="code">
+            <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
+            <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
+            
+            <div class="form-group">
+                <label for="username">👤 Username:</label>
+                <input type="text" id="username" name="username" required autocomplete="username">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">🔑 Password:</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+            
+            <div class="button-group">
+                <button type="submit" name="action" value="authorize" class="btn-authorize">✅ Authorize</button>
+                <button type="submit" name="action" value="deny" class="btn-deny">❌ Deny</button>
+            </div>
+        </form>
     </div>
-    
-    <form method="post">
-        <input type="hidden" name="client_id" value="{{.ClientID}}">
-        <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
-        <input type="hidden" name="scope" value="{{.Scope}}">
-        <input type="hidden" name="state" value="{{.State}}">
-        <input type="hidden" name="response_type" value="code">
-        <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
-        <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
-        
-        <div class="form-group">
-            <label for="username">Username:</label>
-            <input type="text" id="username" name="username" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="password">Password:</label>
-            <input type="password" id="password" name="password" required>
-        </div>
-        
-        <button type="submit" name="action" value="authorize">Authorize</button>
-        <button type="submit" name="action" value="deny">Deny</button>
-    </form>
 </body>
 </html>`
 
-	t, _ := template.New("authorize").Parse(tmpl)
+	t, err := template.New("authorize").Parse(tmpl)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	
 	data := struct {
 		ClientID            string
 		ClientName          string
@@ -158,34 +270,51 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 		CodeChallenge       string
 		CodeChallengeMethod string
 	}{
-		ClientID:            clientID,
-		ClientName:          client.Name,
-		RedirectURI:         redirectURI,
-		Scope:               scope,
+		ClientID:            template.HTMLEscapeString(clientID),
+		ClientName:          template.HTMLEscapeString(client.Name),
+		RedirectURI:         template.HTMLEscapeString(redirectURI),
+		Scope:               template.HTMLEscapeString(scope),
 		Scopes:              scopes,
-		State:               state,
-		CodeChallenge:       codeChallenge,
-		CodeChallengeMethod: codeChallengeMethod,
+		State:               template.HTMLEscapeString(state),
+		CodeChallenge:       template.HTMLEscapeString(codeChallenge),
+		CodeChallengeMethod: template.HTMLEscapeString(codeChallengeMethod),
 	}
 	
-	t.Execute(w, data)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.Execute(w, data); err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }
 
 func (h *Handler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
 	
-	action := r.FormValue("action")
-	clientID := r.FormValue("client_id")
-	redirectURI := r.FormValue("redirect_uri")
-	scope := r.FormValue("scope")
-	state := r.FormValue("state")
-	username := r.FormValue("username")
+	action := strings.TrimSpace(r.FormValue("action"))
+	clientID := strings.TrimSpace(r.FormValue("client_id"))
+	redirectURI := strings.TrimSpace(r.FormValue("redirect_uri"))
+	scope := strings.TrimSpace(r.FormValue("scope"))
+	state := strings.TrimSpace(r.FormValue("state"))
+	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
-	codeChallenge := r.FormValue("code_challenge")
-	codeChallengeMethod := r.FormValue("code_challenge_method")
+	codeChallenge := strings.TrimSpace(r.FormValue("code_challenge"))
+	codeChallengeMethod := strings.TrimSpace(r.FormValue("code_challenge_method"))
+
+	if err := h.validateBasicParams(clientID, redirectURI, "code"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if action == "deny" {
 		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "access_denied", "User denied the request", state)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
+
+	if err := h.validateCredentials(username, password); err != nil {
+		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "invalid_request", err.Error(), state)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
 	}
@@ -346,35 +475,106 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) showLoginPage(w http.ResponseWriter, r *http.Request) {
 	tmpl := `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Login</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Server - Login</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; margin-bottom: 5px; }
-        input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        button { width: 100%; background: #007bff; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0056b3; }
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            max-width: 400px; 
+            margin: 100px auto; 
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 400px;
+        }
+        h2 { 
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        .form-group { margin-bottom: 20px; }
+        label { 
+            display: block; 
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        input { 
+            width: 100%; 
+            padding: 14px; 
+            border: 2px solid #e1e8ed; 
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
+        }
+        button { 
+            width: 100%; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            padding: 14px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+        button:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102,126,234,0.4);
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 48px;
+        }
+        @media (max-width: 480px) {
+            body { margin: 20px; }
+            .login-container { padding: 30px 20px; }
+        }
     </style>
 </head>
 <body>
-    <h2>Login</h2>
-    <form method="post">
-        <div class="form-group">
-            <label for="username">Username:</label>
-            <input type="text" id="username" name="username" required>
-        </div>
-        <div class="form-group">
-            <label for="password">Password:</label>
-            <input type="password" id="password" name="password" required>
-        </div>
-        <button type="submit">Login</button>
-    </form>
+    <div class="login-container">
+        <div class="logo">🔐</div>
+        <h2>Login</h2>
+        <form method="post">
+            <div class="form-group">
+                <label for="username">👤 Username:</label>
+                <input type="text" id="username" name="username" required autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label for="password">🔑 Password:</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+            <button type="submit">Sign In</button>
+        </form>
+    </div>
 </body>
 </html>`
 	
-	w.Header().Set("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, tmpl)
 }
 
@@ -415,10 +615,12 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 
 	clientID := uuid.New().String()
 	var clientSecret string
+	var hashedSecret string
 	var err error
 
 	if !req.IsPublic {
-		clientSecret, err = h.auth.HashPassword(uuid.New().String())
+		clientSecret = uuid.New().String()
+		hashedSecret, err = h.auth.HashPassword(clientSecret)
 		if err != nil {
 			h.sendError(w, "server_error", "Failed to generate client secret", http.StatusInternalServerError)
 			return
@@ -427,7 +629,7 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 
 	client := &db.Client{
 		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		ClientSecret: hashedSecret,
 		Name:         req.Name,
 		RedirectURIs: req.RedirectURIs,
 		Scopes:       req.Scopes,
@@ -442,7 +644,7 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"client_id":     client.ClientID,
-		"client_secret": client.ClientSecret,
+		"client_secret": clientSecret,
 		"name":          client.Name,
 		"redirect_uris": client.RedirectURIs,
 		"scopes":        client.Scopes,
@@ -456,13 +658,27 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListClients(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
-	clients := []map[string]interface{}{
-		{
-			"message": "Client listing not implemented yet",
-		},
+	clients, err := h.db.GetAllClients()
+	if err != nil {
+		h.sendError(w, "server_error", "Failed to retrieve clients", http.StatusInternalServerError)
+		return
 	}
 	
-	json.NewEncoder(w).Encode(clients)
+	publicClients := make([]map[string]interface{}, 0, len(clients))
+	for _, client := range clients {
+		publicClient := map[string]interface{}{
+			"client_id":     client.ClientID,
+			"name":          client.Name,
+			"redirect_uris": client.RedirectURIs,
+			"scopes":        client.Scopes,
+			"grant_types":   client.GrantTypes,
+			"is_public":     client.IsPublic,
+			"created_at":    client.CreatedAt,
+		}
+		publicClients = append(publicClients, publicClient)
+	}
+	
+	json.NewEncoder(w).Encode(publicClients)
 }
 
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -552,4 +768,69 @@ func (h *Handler) handleTokenError(w http.ResponseWriter, err error) {
 	default:
 		h.sendError(w, "server_error", "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+func (h *Handler) validateBasicParams(clientID, redirectURI, responseType string) error {
+	if clientID == "" {
+		return fmt.Errorf("invalid_request: client_id is required")
+	}
+	if redirectURI == "" {
+		return fmt.Errorf("invalid_request: redirect_uri is required")
+	}
+	if responseType == "" {
+		return fmt.Errorf("invalid_request: response_type is required")
+	}
+	
+	if _, err := url.Parse(redirectURI); err != nil {
+		return fmt.Errorf("invalid_request: redirect_uri is not a valid URL")
+	}
+	
+	return nil
+}
+
+func (h *Handler) validateCredentials(username, password string) error {
+	if username == "" {
+		return fmt.Errorf("username is required")
+	}
+	if password == "" {
+		return fmt.Errorf("password is required")
+	}
+	
+	if len(username) > 255 {
+		return fmt.Errorf("username too long")
+	}
+	if len(password) > 255 {
+		return fmt.Errorf("password too long")
+	}
+	
+	for _, r := range username {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' && r != '.' && r != '@' {
+			return fmt.Errorf("username contains invalid characters")
+		}
+	}
+	
+	return nil
+}
+
+func (h *Handler) validateJSONInput(req interface{}) error {
+	switch v := req.(type) {
+	case map[string]interface{}:
+		for key, value := range v {
+			if key == "" {
+				return fmt.Errorf("empty key not allowed")
+			}
+			
+			switch val := value.(type) {
+			case string:
+				if len(val) > 1000 {
+					return fmt.Errorf("string value too long for key %s", key)
+				}
+			case []interface{}:
+				if len(val) > 100 {
+					return fmt.Errorf("array too long for key %s", key)
+				}
+			}
+		}
+	}
+	return nil
 }

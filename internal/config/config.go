@@ -20,6 +20,9 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
+	TLSCert      string
+	TLSKey       string
+	BaseURL      string
 }
 
 type DatabaseConfig struct {
@@ -52,6 +55,9 @@ func Load() *Config {
 			ReadTimeout:  getDurationEnv("READ_TIMEOUT", 10*time.Second),
 			WriteTimeout: getDurationEnv("WRITE_TIMEOUT", 10*time.Second),
 			IdleTimeout:  getDurationEnv("IDLE_TIMEOUT", 60*time.Second),
+			TLSCert:      getEnv("TLS_CERT", ""),
+			TLSKey:       getEnv("TLS_KEY", ""),
+			BaseURL:      getEnv("BASE_URL", ""),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),

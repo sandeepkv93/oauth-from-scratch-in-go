@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,13 +52,22 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 		m.metrics.DecrementActiveRequests()
 		m.metrics.RecordResponseTime(r.URL.Path, duration)
 		
-		log.Printf("%s %s %d %v %s",
+		clientIP := getClientIP(r)
+		userAgent := r.Header.Get("User-Agent")
+		
+		log.Printf("[%s] %s %s %d %v %s \"%s\"",
+			start.Format("2006-01-02 15:04:05"),
 			r.Method,
 			r.URL.Path,
 			wrapped.statusCode,
 			duration,
-			r.RemoteAddr,
+			clientIP,
+			userAgent,
 		)
+		
+		if wrapped.statusCode >= 400 {
+			log.Printf("[ERROR] %s %s returned %d from %s", r.Method, r.URL.Path, wrapped.statusCode, clientIP)
+		}
 	})
 }
 
@@ -79,7 +90,7 @@ func (m *Middleware) CORS(next http.Handler) http.Handler {
 func (m *Middleware) RateLimit(maxRequests int, window time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := r.RemoteAddr
+			clientIP := getClientIP(r)
 			
 			m.mutex.Lock()
 			limiter, exists := m.rateLimits[clientIP]
@@ -205,4 +216,31 @@ func extractBearerToken(r *http.Request) string {
 	}
 
 	return ""
+}
+
+func getClientIP(r *http.Request) string {
+	xForwardedFor := r.Header.Get("X-Forwarded-For")
+	if xForwardedFor != "" {
+		ips := strings.Split(xForwardedFor, ",")
+		if len(ips) > 0 {
+			ip := strings.TrimSpace(ips[0])
+			if net.ParseIP(ip) != nil {
+				return ip
+			}
+		}
+	}
+	
+	xRealIP := r.Header.Get("X-Real-IP")
+	if xRealIP != "" {
+		if net.ParseIP(xRealIP) != nil {
+			return xRealIP
+		}
+	}
+	
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	
+	return ip
 }

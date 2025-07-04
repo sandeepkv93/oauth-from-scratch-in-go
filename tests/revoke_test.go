@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 	"oauth-server/internal/auth"
 	"oauth-server/internal/db"
 	"oauth-server/internal/handlers"
@@ -251,9 +252,10 @@ func TestRevokeTokenWrongClient(t *testing.T) {
 		t.Fatalf("Failed to get token: %v", err)
 	}
 
+	hashedOtherSecret, _ := bcrypt.GenerateFromPassword([]byte("other-secret"), bcrypt.DefaultCost)
 	otherClient := &db.Client{
 		ClientID:     "other-client",
-		ClientSecret: "other-secret",
+		ClientSecret: string(hashedOtherSecret),
 		Name:         "Other Client",
 		RedirectURIs: []string{"http://localhost:8080/callback"},
 		Scopes:       []string{"read", "write"},

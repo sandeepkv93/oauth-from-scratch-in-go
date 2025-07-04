@@ -29,10 +29,19 @@ func main() {
 	}
 	defer database.Close()
 
+	baseURL := cfg.Server.BaseURL
+	if baseURL == "" {
+		scheme := "http"
+		if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
+			scheme = "https"
+		}
+		baseURL = scheme + "://" + cfg.Server.Host + ":" + cfg.Server.Port
+	}
+
 	jwtManager := jwt.NewManager(cfg.Auth.JWTSecret)
 	authService := auth.NewService(database, jwtManager, cfg)
 	metricsService := monitoring.NewService()
-	oidcService := oidc.NewService(jwtManager, "http://"+cfg.Server.Host+":"+cfg.Server.Port)
+	oidcService := oidc.NewService(jwtManager, baseURL)
 	
 	handler := handlers.NewHandler(authService, database)
 	middlewareManager := middleware.NewMiddleware(authService, metricsService)
@@ -49,8 +58,8 @@ func main() {
 	
 	router.HandleFunc("/health", metricsService.ServeHealthCheck).Methods("GET")
 	router.HandleFunc("/metrics", metricsService.ServeMetrics).Methods("GET")
-	router.HandleFunc("/.well-known/oauth-authorization-server", wellKnownOIDCEndpoint(oidcService, cfg)).Methods("GET")
-	router.HandleFunc("/.well-known/openid-configuration", wellKnownOIDCEndpoint(oidcService, cfg)).Methods("GET")
+	router.HandleFunc("/.well-known/oauth-authorization-server", wellKnownOIDCEndpoint(oidcService, baseURL)).Methods("GET")
+	router.HandleFunc("/.well-known/openid-configuration", wellKnownOIDCEndpoint(oidcService, baseURL)).Methods("GET")
 	
 	srv := &http.Server{
 		Addr:         cfg.Server.Host + ":" + cfg.Server.Port,
@@ -62,8 +71,16 @@ func main() {
 
 	go func() {
 		log.Printf("OAuth server starting on %s:%s", cfg.Server.Host, cfg.Server.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+		if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
+			log.Printf("Using HTTPS with TLS certificates")
+			if err := srv.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Failed to start HTTPS server: %v", err)
+			}
+		} else {
+			log.Printf("WARNING: Using HTTP without TLS. This is insecure for production!")
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Failed to start server: %v", err)
+			}
 		}
 	}()
 
@@ -83,10 +100,8 @@ func main() {
 }
 
 
-func wellKnownOIDCEndpoint(oidcService *oidc.Service, cfg *config.Config) http.HandlerFunc {
+func wellKnownOIDCEndpoint(oidcService *oidc.Service, baseURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		baseURL := "http://" + cfg.Server.Host + ":" + cfg.Server.Port
-		
 		response := oidcService.GetWellKnownConfiguration(baseURL)
 
 		w.Header().Set("Content-Type", "application/json")

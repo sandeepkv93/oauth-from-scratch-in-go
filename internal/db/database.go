@@ -202,6 +202,39 @@ func (d *Database) GetClientByID(clientID string) (*Client, error) {
 	return client, nil
 }
 
+func (d *Database) GetAllClients() ([]*Client, error) {
+	query := `SELECT id, client_id, client_secret, name, redirect_uris, scopes, grant_types, is_public, created_at, updated_at 
+			  FROM clients ORDER BY created_at DESC`
+	
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	
+	var clients []*Client
+	for rows.Next() {
+		client := &Client{}
+		var redirectURIs, scopes, grantTypes pq.StringArray
+		
+		err := rows.Scan(
+			&client.ID, &client.ClientID, &client.ClientSecret, &client.Name,
+			&redirectURIs, &scopes, &grantTypes, &client.IsPublic,
+			&client.CreatedAt, &client.UpdatedAt)
+		
+		if err != nil {
+			return nil, err
+		}
+		
+		client.RedirectURIs = []string(redirectURIs)
+		client.Scopes = []string(scopes)
+		client.GrantTypes = []string(grantTypes)
+		clients = append(clients, client)
+	}
+	
+	return clients, nil
+}
+
 func (d *Database) CreateAuthorizationCode(code *AuthorizationCode) error {
 	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 

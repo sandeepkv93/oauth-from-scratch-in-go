@@ -8,6 +8,7 @@ type DatabaseInterface interface {
 	GetUserByID(id uuid.UUID) (*User, error)
 	CreateClient(client *Client) error
 	GetClientByID(clientID string) (*Client, error)
+	GetAllClients() ([]*Client, error)
 	CreateAuthorizationCode(code *AuthorizationCode) error
 	GetAuthorizationCode(code string) (*AuthorizationCode, error)
 	MarkAuthorizationCodeUsed(code string) error
