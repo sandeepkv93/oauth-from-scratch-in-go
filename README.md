@@ -44,8 +44,8 @@ A production-ready OAuth 2.0 authorization server implementation built from scra
 
 ## Quick Start
 
-> **📦 New: Task-based Build System**  
-> This project now uses [Taskfile](https://taskfile.dev/) for build automation, providing better cross-platform support and enhanced developer experience. The traditional Makefile is still supported but deprecated. See [TASKFILE_MIGRATION.md](TASKFILE_MIGRATION.md) for migration details.
+> **📦 Task-based Build System**  
+> This project uses [Taskfile](https://taskfile.dev/) for build automation, providing better cross-platform support and enhanced developer experience. See [TASKFILE_MIGRATION.md](TASKFILE_MIGRATION.md) for details.
 
 ### Prerequisites
 
@@ -61,21 +61,17 @@ A production-ready OAuth 2.0 authorization server implementation built from scra
    cd oauth-from-scratch-in-go
    ```
 
-2. **Install Task (recommended) or use Make**:
+2. **Install Task**:
    ```bash
-   # Install Task (modern build tool)
+   # Install Task
    sh -c "$(curl -ssL https://taskfile.dev/install.sh)"
    # OR use the project's self-install
    task install:taskfile
-   
-   # Alternative: Use traditional Make (deprecated)
-   # make deps
    ```
 
 3. **Install dependencies**:
    ```bash
-   task deps          # Using Task (recommended)
-   # OR make deps     # Using Make (deprecated)
+   task deps
    ```
 
 4. **Setup environment**:
@@ -90,14 +86,12 @@ A production-ready OAuth 2.0 authorization server implementation built from scra
    createdb oauth_server
    
    # Run setup script
-   task db:setup      # Using Task (recommended)
-   # OR make setup-db # Using Make (deprecated)
+   task db:setup
    ```
 
 6. **Build and run**:
    ```bash
-   task build && task run    # Using Task (recommended)
-   # OR make build && make run # Using Make (deprecated)
+   task build && task run
    
    # Quick development run (no build step)
    task run:dev
@@ -143,14 +137,12 @@ task release           # Build release binaries
 
 1. **Build Docker image**:
    ```bash
-   task docker:build     # Using Task (recommended)
-   # OR make docker-build # Using Make (deprecated)
+   task docker:build
    ```
 
 2. **Run with Docker**:
    ```bash
-   task docker:run       # Using Task (recommended)
-   # OR make docker-run  # Using Make (deprecated)
+   task docker:run
    
    # Run with environment file
    task docker:run:env
@@ -237,19 +229,19 @@ The server can be configured using environment variables or a `.env` file:
 ### Run Unit Tests
 
 ```bash
-make test
+task test
 ```
 
 ### Run with Coverage
 
 ```bash
-make test-coverage
+task test:coverage
 ```
 
 ### Test OAuth Flows
 
 ```bash
-make test-oauth
+task test:oauth
 ```
 
 This will run a comprehensive test script that demonstrates all OAuth flows.
@@ -267,19 +259,19 @@ This will run a comprehensive test script that demonstrates all OAuth flows.
 
 ## Development
 
-### Available Make Targets
+### Available Task Commands
 
 ```bash
-make help              # Show all available targets
-make deps              # Install dependencies
-make build             # Build the server
-make run               # Run the server
-make test              # Run tests
-make fmt               # Format code
-make lint              # Lint code (requires golangci-lint)
-make security          # Security scan (requires gosec)
-make dev               # Development server with auto-reload
-make install-tools     # Install development tools
+task --list            # Show all available tasks
+task deps              # Install dependencies
+task build             # Build the server
+task run               # Run the server
+task test              # Run tests
+task fmt               # Format code
+task lint              # Lint code
+task security          # Security scan
+task run:dev           # Development server
+task install:tools     # Install development tools
 ```
 
 ### Code Structure
