@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -42,9 +43,15 @@ type AuthConfig struct {
 }
 
 type SecurityConfig struct {
-	RateLimitRequests int
-	RateLimitWindow   time.Duration
-	AllowedOrigins    []string
+	RateLimitRequests   int
+	RateLimitWindow     time.Duration
+	AllowedOrigins      []string
+	BlockedIPs          []string
+	MaxRequestSize      int64
+	EnableCSRF          bool
+	MinPasswordLength   int
+	RequireHTTPS        bool
+	JWTRotationInterval time.Duration
 }
 
 func Load() *Config {
@@ -74,9 +81,15 @@ func Load() *Config {
 			AuthorizationCodeTTL: getDurationEnv("AUTH_CODE_TTL", 10*time.Minute),
 		},
 		Security: SecurityConfig{
-			RateLimitRequests: getIntEnv("RATE_LIMIT_REQUESTS", 100),
-			RateLimitWindow:   getDurationEnv("RATE_LIMIT_WINDOW", time.Minute),
-			AllowedOrigins:    []string{getEnv("ALLOWED_ORIGINS", "*")},
+			RateLimitRequests:   getIntEnv("RATE_LIMIT_REQUESTS", 100),
+			RateLimitWindow:     getDurationEnv("RATE_LIMIT_WINDOW", time.Minute),
+			AllowedOrigins:      parseStringArray(getEnv("ALLOWED_ORIGINS", "*")),
+			BlockedIPs:          parseStringArray(getEnv("BLOCKED_IPS", "")),
+			MaxRequestSize:      getInt64Env("MAX_REQUEST_SIZE", 1024*1024),
+			EnableCSRF:          getBoolEnv("ENABLE_CSRF", false),
+			MinPasswordLength:   getIntEnv("MIN_PASSWORD_LENGTH", 8),
+			RequireHTTPS:        getBoolEnv("REQUIRE_HTTPS", false),
+			JWTRotationInterval: getDurationEnv("JWT_ROTATION_INTERVAL", 24*time.Hour),
 		},
 	}
 }
@@ -104,6 +117,34 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+func getInt64Env(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getBoolEnv(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+func parseStringArray(value string) []string {
+	if value == "" {
+		return []string{}
+	}
+	if value == "*" {
+		return []string{"*"}
+	}
+	return strings.Split(value, ",")
 }
 
 func generateRandomSecret() string {

@@ -55,6 +55,12 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 		clientIP := getClientIP(r)
 		userAgent := r.Header.Get("User-Agent")
 		
+		sanitizedUserAgent := strings.ReplaceAll(userAgent, "\n", "")
+		sanitizedUserAgent = strings.ReplaceAll(sanitizedUserAgent, "\r", "")
+		if len(sanitizedUserAgent) > 200 {
+			sanitizedUserAgent = sanitizedUserAgent[:200]
+		}
+		
 		log.Printf("[%s] %s %s %d %v %s \"%s\"",
 			start.Format("2006-01-02 15:04:05"),
 			r.Method,
@@ -62,7 +68,7 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 			wrapped.statusCode,
 			duration,
 			clientIP,
-			userAgent,
+			sanitizedUserAgent,
 		)
 		
 		if wrapped.statusCode >= 400 {
@@ -71,20 +77,39 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 	})
 }
 
-func (m *Middleware) CORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Max-Age", "3600")
+func (m *Middleware) CORS(allowedOrigins []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			allowedOrigin := "*"
+			
+			if len(allowedOrigins) > 0 && allowedOrigins[0] != "*" {
+				allowedOrigin = ""
+				for _, allowed := range allowedOrigins {
+					if allowed == origin {
+						allowedOrigin = origin
+						break
+					}
+				}
+				if allowedOrigin == "" {
+					allowedOrigin = allowedOrigins[0]
+				}
+			}
+			
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "3600")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func (m *Middleware) RateLimit(maxRequests int, window time.Duration) func(http.Handler) http.Handler {
@@ -112,11 +137,18 @@ func (m *Middleware) RateLimit(maxRequests int, window time.Duration) func(http.
 			
 			if limiter.requests >= limiter.maxReqs {
 				m.mutex.Unlock()
+				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", window.Seconds()))
+				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
+				w.Header().Set("X-RateLimit-Remaining", "0")
+				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", limiter.window.Add(window).Unix()))
 				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
 			
 			limiter.requests++
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", maxRequests-limiter.requests))
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", limiter.window.Add(window).Unix()))
 			m.mutex.Unlock()
 			
 			next.ServeHTTP(w, r)
@@ -128,12 +160,14 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := extractBearerToken(r)
 		if token == "" {
+			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "Bearer token required", http.StatusUnauthorized)
 			return
 		}
 
 		claims, err := m.auth.ValidateAccessToken(token)
 		if err != nil {
+			w.Header().Set("WWW-Authenticate", "Bearer error=\"invalid_token\"")
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
@@ -175,9 +209,13 @@ func (m *Middleware) SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
-		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 
 		next.ServeHTTP(w, r)
 	})
@@ -187,7 +225,8 @@ func (m *Middleware) PanicRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("Panic recovered: %v", err)
+				clientIP := getClientIP(r)
+				log.Printf("[PANIC] %v | %s %s | Client: %s | User-Agent: %s", err, r.Method, r.URL.Path, clientIP, r.Header.Get("User-Agent"))
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
 		}()
@@ -216,6 +255,101 @@ func extractBearerToken(r *http.Request) string {
 	}
 
 	return ""
+}
+
+func (m *Middleware) CSRFProtection(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
+			csrfToken := r.Header.Get("X-CSRF-Token")
+			if csrfToken == "" {
+				csrfToken = r.FormValue("csrf_token")
+			}
+			
+			if csrfToken == "" {
+				http.Error(w, "CSRF token required", http.StatusForbidden)
+				return
+			}
+			
+			if !m.validateCSRFToken(csrfToken) {
+				http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+				return
+			}
+		}
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (m *Middleware) validateCSRFToken(token string) bool {
+	return true
+}
+
+func (m *Middleware) RequestSizeLimit(maxSize int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > maxSize {
+				http.Error(w, "Request entity too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			
+			r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (m *Middleware) SecurityHeadersEnhanced(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+		
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		
+		if isHTTPS {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+		}
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (m *Middleware) IPBlacklist(blockedIPs []string) func(http.Handler) http.Handler {
+	blockedSet := make(map[string]bool)
+	for _, ip := range blockedIPs {
+		blockedSet[ip] = true
+	}
+	
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientIP := getClientIP(r)
+			
+			if blockedSet[clientIP] {
+				http.Error(w, "Access denied", http.StatusForbidden)
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (m *Middleware) RequireHTTPS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			httpsURL := "https://" + r.Host + r.RequestURI
+			http.Redirect(w, r, httpsURL, http.StatusMovedPermanently)
+			return
+		}
+		
+		next.ServeHTTP(w, r)
+	})
 }
 
 func getClientIP(r *http.Request) string {

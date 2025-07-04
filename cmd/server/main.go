@@ -66,10 +66,19 @@ func main() {
 	router := mux.NewRouter()
 	
 	router.Use(middlewareManager.Logger)
-	router.Use(middlewareManager.CORS)
-	router.Use(middlewareManager.SecurityHeaders)
+	router.Use(middlewareManager.CORS(cfg.Security.AllowedOrigins))
+	router.Use(middlewareManager.SecurityHeadersEnhanced)
 	router.Use(middlewareManager.PanicRecovery)
 	router.Use(middlewareManager.RateLimit(cfg.Security.RateLimitRequests, cfg.Security.RateLimitWindow))
+	router.Use(middlewareManager.RequestSizeLimit(cfg.Security.MaxRequestSize))
+	
+	if len(cfg.Security.BlockedIPs) > 0 {
+		router.Use(middlewareManager.IPBlacklist(cfg.Security.BlockedIPs))
+	}
+	
+	if cfg.Security.RequireHTTPS {
+		router.Use(middlewareManager.RequireHTTPS)
+	}
 	
 	handler.RegisterRoutes(router)
 	

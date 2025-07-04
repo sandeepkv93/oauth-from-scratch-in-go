@@ -56,7 +56,7 @@ func setupIntegrationTest() *IntegrationTestSuite {
 	
 	router := mux.NewRouter()
 	router.Use(middlewareManager.Logger)
-	router.Use(middlewareManager.CORS)
+	router.Use(middlewareManager.CORS([]string{"*"}))
 	
 	handler.RegisterRoutes(router)
 	

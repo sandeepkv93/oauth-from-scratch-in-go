@@ -19,6 +19,7 @@ type MockDB struct {
 	codes   map[string]*db.AuthorizationCode
 	accessTokens map[string]*db.AccessToken
 	refreshTokens map[string]*db.RefreshToken
+	deviceCodes map[string]*db.DeviceCode
 }
 
 func NewMockDatabase() *MockDB {
@@ -28,6 +29,7 @@ func NewMockDatabase() *MockDB {
 		codes:         make(map[string]*db.AuthorizationCode),
 		accessTokens:  make(map[string]*db.AccessToken),
 		refreshTokens: make(map[string]*db.RefreshToken),
+		deviceCodes:   make(map[string]*db.DeviceCode),
 	}
 }
 
@@ -146,6 +148,40 @@ func (m *MockDB) RevokeRefreshToken(token string) error {
 	return nil
 }
 
+func (m *MockDB) CreateDeviceCode(deviceCode *db.DeviceCode) error {
+	deviceCode.ID = uuid.New()
+	deviceCode.CreatedAt = time.Now()
+	m.deviceCodes[deviceCode.DeviceCode] = deviceCode
+	return nil
+}
+
+func (m *MockDB) GetDeviceCode(deviceCode string) (*db.DeviceCode, error) {
+	if device, exists := m.deviceCodes[deviceCode]; exists && device.ExpiresAt.After(time.Now()) {
+		return device, nil
+	}
+	return nil, auth.ErrExpiredToken
+}
+
+func (m *MockDB) GetDeviceCodeByUserCode(userCode string) (*db.DeviceCode, error) {
+	for _, device := range m.deviceCodes {
+		if device.UserCode == userCode && device.ExpiresAt.After(time.Now()) {
+			return device, nil
+		}
+	}
+	return nil, auth.ErrExpiredToken
+}
+
+func (m *MockDB) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
+	for _, device := range m.deviceCodes {
+		if device.UserCode == userCode && device.ExpiresAt.After(time.Now()) {
+			device.Authorized = true
+			device.UserID = &userID
+			return nil
+		}
+	}
+	return auth.ErrExpiredToken
+}
+
 func (m *MockDB) Close() error {
 	return nil
 }
@@ -159,6 +195,9 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 			AccessTokenTTL:       15 * time.Minute,
 			RefreshTokenTTL:      7 * 24 * time.Hour,
 			AuthorizationCodeTTL: 10 * time.Minute,
+		},
+		Security: config.SecurityConfig{
+			MinPasswordLength: 8,
 		},
 	}
 

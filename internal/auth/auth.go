@@ -513,7 +513,51 @@ func (s *Service) ValidateAccessToken(token string) (*jwt.Claims, error) {
 	return s.jwt.ValidateAccessToken(token)
 }
 
+func (s *Service) ValidatePasswordStrength(password string) error {
+	minLength := s.config.Security.MinPasswordLength
+	if len(password) < minLength {
+		return fmt.Errorf("password must be at least %d characters long", minLength)
+	}
+	
+	hasUpper := false
+	hasLower := false
+	hasNumber := false
+	hasSpecial := false
+	
+	for _, char := range password {
+		switch {
+		case 'A' <= char && char <= 'Z':
+			hasUpper = true
+		case 'a' <= char && char <= 'z':
+			hasLower = true
+		case '0' <= char && char <= '9':
+			hasNumber = true
+		case strings.ContainsRune("!@#$%^&*(),.?\":{}|<>", char):
+			hasSpecial = true
+		}
+	}
+	
+	if !hasUpper {
+		return errors.New("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return errors.New("password must contain at least one lowercase letter")
+	}
+	if !hasNumber {
+		return errors.New("password must contain at least one number")
+	}
+	if !hasSpecial {
+		return errors.New("password must contain at least one special character")
+	}
+	
+	return nil
+}
+
 func (s *Service) HashPassword(password string) (string, error) {
+	if err := s.ValidatePasswordStrength(password); err != nil {
+		return "", err
+	}
+	
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(bytes), err
 }

@@ -66,7 +66,7 @@ func TestCORSMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	wrappedHandler := middlewareManager.CORS(handler)
+	wrappedHandler := middlewareManager.CORS([]string{"*"})(handler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
@@ -78,6 +78,7 @@ func TestCORSMiddleware(t *testing.T) {
 		"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 		"Access-Control-Allow-Headers": "Content-Type, Authorization",
 		"Access-Control-Max-Age":       "3600",
+		"Access-Control-Allow-Credentials": "true",
 	}
 
 	for header, expectedValue := range expectedHeaders {
@@ -97,7 +98,7 @@ func TestCORSOptionsRequest(t *testing.T) {
 		t.Error("Handler should not be called for OPTIONS request")
 	})
 
-	wrappedHandler := middlewareManager.CORS(handler)
+	wrappedHandler := middlewareManager.CORS([]string{"*"})(handler)
 
 	req := httptest.NewRequest("OPTIONS", "/test", nil)
 	rr := httptest.NewRecorder()
@@ -312,7 +313,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	secureHandler := middlewareManager.SecurityHeaders(handler)
+	secureHandler := middlewareManager.SecurityHeadersEnhanced(handler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
@@ -323,9 +324,12 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		"X-Content-Type-Options":           "nosniff",
 		"X-Frame-Options":                  "DENY",
 		"X-XSS-Protection":                 "1; mode=block",
-		"Strict-Transport-Security":        "max-age=31536000; includeSubDomains",
 		"Referrer-Policy":                  "strict-origin-when-cross-origin",
-		"Content-Security-Policy":          "default-src 'self'",
+		"Content-Security-Policy":          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+		"Permissions-Policy":               "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()",
+		"Cache-Control":                    "no-store, no-cache, must-revalidate, private",
+		"Pragma":                           "no-cache",
+		"Expires":                          "0",
 	}
 
 	for header, expectedValue := range expectedHeaders {
