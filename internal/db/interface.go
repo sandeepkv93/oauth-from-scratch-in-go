@@ -18,5 +18,9 @@ type DatabaseInterface interface {
 	GetRefreshToken(token string) (*RefreshToken, error)
 	RevokeAccessToken(tokenID uuid.UUID) error
 	RevokeRefreshToken(token string) error
+	CreateDeviceCode(deviceCode *DeviceCode) error
+	GetDeviceCode(deviceCode string) (*DeviceCode, error)
+	GetDeviceCodeByUserCode(userCode string) (*DeviceCode, error)
+	AuthorizeDeviceCode(userCode string, userID uuid.UUID) error
 	Close() error
 }

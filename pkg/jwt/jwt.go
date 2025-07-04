@@ -26,12 +26,26 @@ type TokenPair struct {
 }
 
 type Manager struct {
-	secret []byte
+	secret     []byte
+	keyManager KeyManager
+}
+
+type KeyManager interface {
+	SignToken(token *jwt.Token) (string, error)
+	VerifyToken(tokenString string) (*jwt.Token, error)
+	GetCurrentKeyID() string
 }
 
 func NewManager(secret string) *Manager {
 	return &Manager{
 		secret: []byte(secret),
+	}
+}
+
+func NewManagerWithKeyManager(secret string, keyManager KeyManager) *Manager {
+	return &Manager{
+		secret:     []byte(secret),
+		keyManager: keyManager,
 	}
 }
 
@@ -53,27 +67,67 @@ func (m *Manager) GenerateAccessToken(userID uuid.UUID, clientID string, scopes 
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(m.secret)
+	var token *jwt.Token
+	if m.keyManager != nil {
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		return m.keyManager.SignToken(token)
+	} else {
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		return token.SignedString(m.secret)
+	}
 }
 
 func (m *Manager) ValidateAccessToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("invalid signing method")
+	if m.keyManager != nil {
+		token, err := m.keyManager.VerifyToken(tokenString)
+		if err != nil {
+			return nil, err
 		}
-		return m.secret, nil
-	})
+		
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			parsedClaims := &Claims{}
+			if userID, ok := claims["user_id"].(string); ok {
+				if uid, err := uuid.Parse(userID); err == nil {
+					parsedClaims.UserID = uid
+				}
+			}
+			if clientID, ok := claims["client_id"].(string); ok {
+				parsedClaims.ClientID = clientID
+			}
+			if scopes, ok := claims["scopes"].([]interface{}); ok {
+				parsedClaims.Scopes = make([]string, len(scopes))
+				for i, scope := range scopes {
+					if s, ok := scope.(string); ok {
+						parsedClaims.Scopes[i] = s
+					}
+				}
+			}
+			if tokenID, ok := claims["token_id"].(string); ok {
+				if tid, err := uuid.Parse(tokenID); err == nil {
+					parsedClaims.TokenID = tid
+				}
+			}
+			return parsedClaims, nil
+		}
+		return nil, errors.New("invalid token claims")
+	} else {
+		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("invalid signing method")
+			}
+			return m.secret, nil
+		})
 
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+
+		if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+			return claims, nil
+		}
+
+		return nil, errors.New("invalid token")
 	}
-
-	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		return claims, nil
-	}
-
-	return nil, errors.New("invalid token")
 }
 
 func (m *Manager) GenerateRefreshToken() (string, error) {
@@ -101,5 +155,8 @@ func (m *Manager) GenerateClientSecret() (string, error) {
 }
 
 func (m *Manager) SignToken(token *jwt.Token) (string, error) {
+	if m.keyManager != nil {
+		return m.keyManager.SignToken(token)
+	}
 	return token.SignedString(m.secret)
 }

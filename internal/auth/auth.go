@@ -1,7 +1,11 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"math/big"
 	"net/url"
 	"strings"
 	"time"
@@ -25,6 +29,10 @@ var (
 	ErrInvalidCodeChallenge   = errors.New("invalid code challenge")
 	ErrInvalidCodeVerifier    = errors.New("invalid code verifier")
 	ErrCodeChallengeMismatch  = errors.New("code challenge verification failed")
+	ErrAuthorizationPending   = errors.New("authorization_pending")
+	ErrSlowDown               = errors.New("slow_down")
+	ErrAccessDenied           = errors.New("access_denied")
+	ErrExpiredToken           = errors.New("expired_token")
 )
 
 type Service struct {
@@ -53,6 +61,9 @@ type TokenRequest struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
 	CodeVerifier string `json:"code_verifier,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	DeviceCode   string `json:"device_code,omitempty"`
 }
 
 type TokenResponse struct {
@@ -61,6 +72,20 @@ type TokenResponse struct {
 	ExpiresIn    int64  `json:"expires_in"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	Scope        string `json:"scope,omitempty"`
+}
+
+type DeviceAuthorizationRequest struct {
+	ClientID string `json:"client_id"`
+	Scope    string `json:"scope,omitempty"`
+}
+
+type DeviceAuthorizationResponse struct {
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationURI         string `json:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete,omitempty"`
+	ExpiresIn               int64  `json:"expires_in"`
+	Interval                int    `json:"interval"`
 }
 
 func NewService(database db.DatabaseInterface, jwtManager *jwt.Manager, cfg *config.Config) *Service {
@@ -267,6 +292,163 @@ func (s *Service) ClientCredentialsGrant(req *TokenRequest) (*TokenResponse, err
 	}
 
 	return s.createTokenPair(uuid.Nil, req.ClientID, scopes)
+}
+
+func (s *Service) ResourceOwnerPasswordCredentialsGrant(req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	if !s.hasGrantType(client, "password") {
+		return nil, ErrInvalidGrant
+	}
+
+	if req.Username == "" || req.Password == "" {
+		return nil, errors.New("username and password required")
+	}
+
+	user, err := s.AuthenticateUser(req.Username, req.Password)
+	if err != nil {
+		return nil, ErrInvalidCredentials
+	}
+
+	scopes := client.Scopes
+	if req.Scope != "" {
+		requestedScopes := strings.Split(req.Scope, " ")
+		if err := s.ValidateScopes(requestedScopes, client.Scopes); err != nil {
+			return nil, err
+		}
+		scopes = requestedScopes
+	}
+
+	return s.createTokenPair(user.ID, req.ClientID, scopes)
+}
+
+func (s *Service) InitiateDeviceAuthorization(req *DeviceAuthorizationRequest, baseURL string) (*DeviceAuthorizationResponse, error) {
+	client, err := s.db.GetClientByID(req.ClientID)
+	if err != nil {
+		return nil, ErrInvalidClient
+	}
+
+	if !s.hasGrantType(client, "urn:ietf:params:oauth:grant-type:device_code") {
+		return nil, ErrInvalidGrant
+	}
+
+	scopes := []string{}
+	if req.Scope != "" {
+		scopes = strings.Split(req.Scope, " ")
+		if err := s.ValidateScopes(scopes, client.Scopes); err != nil {
+			return nil, err
+		}
+	}
+
+	deviceCode, err := s.generateDeviceCode()
+	if err != nil {
+		return nil, err
+	}
+
+	userCode, err := s.generateUserCode()
+	if err != nil {
+		return nil, err
+	}
+
+	verificationURI := baseURL + "/device"
+	verificationURIComplete := fmt.Sprintf("%s?user_code=%s", verificationURI, userCode)
+	expiresIn := int64(600) // 10 minutes
+	interval := 5           // 5 seconds
+
+	deviceCodeRecord := &db.DeviceCode{
+		DeviceCode:              deviceCode,
+		UserCode:                userCode,
+		VerificationURI:         verificationURI,
+		VerificationURIComplete: verificationURIComplete,
+		ClientID:                req.ClientID,
+		Scopes:                  scopes,
+		ExpiresAt:               time.Now().Add(time.Duration(expiresIn) * time.Second),
+		Interval:                interval,
+	}
+
+	if err := s.db.CreateDeviceCode(deviceCodeRecord); err != nil {
+		return nil, err
+	}
+
+	return &DeviceAuthorizationResponse{
+		DeviceCode:              deviceCode,
+		UserCode:                userCode,
+		VerificationURI:         verificationURI,
+		VerificationURIComplete: verificationURIComplete,
+		ExpiresIn:               expiresIn,
+		Interval:                interval,
+	}, nil
+}
+
+func (s *Service) DeviceCodeGrant(req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	if !s.hasGrantType(client, "urn:ietf:params:oauth:grant-type:device_code") {
+		return nil, ErrInvalidGrant
+	}
+
+	deviceCode, err := s.db.GetDeviceCode(req.DeviceCode)
+	if err != nil {
+		return nil, ErrExpiredToken
+	}
+
+	if deviceCode.ClientID != req.ClientID {
+		return nil, ErrInvalidClient
+	}
+
+	if !deviceCode.Authorized {
+		return nil, ErrAuthorizationPending
+	}
+
+	if deviceCode.UserID == nil {
+		return nil, ErrAccessDenied
+	}
+
+	return s.createTokenPair(*deviceCode.UserID, req.ClientID, deviceCode.Scopes)
+}
+
+func (s *Service) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
+	_, err := s.db.GetDeviceCodeByUserCode(userCode)
+	if err != nil {
+		return errors.New("invalid user code")
+	}
+
+	return s.db.AuthorizeDeviceCode(userCode, userID)
+}
+
+func (s *Service) generateDeviceCode() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes), nil
+}
+
+func (s *Service) generateUserCode() (string, error) {
+	const charset = "BCDFGHJKLMNPQRSTVWXZ23456789"
+	const length = 8
+	
+	result := make([]byte, length)
+	for i := range result {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = charset[num.Int64()]
+		
+		if i == 3 {
+			result = append(result[:i+1], append([]byte{'-'}, result[i+1:]...)...)
+			i++
+		}
+	}
+	
+	return string(result), nil
 }
 
 func (s *Service) createTokenPair(userID uuid.UUID, clientID string, scopes []string) (*TokenResponse, error) {

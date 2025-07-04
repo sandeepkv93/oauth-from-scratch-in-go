@@ -73,3 +73,19 @@ type Scope struct {
 	IsDefault   bool      `json:"is_default" db:"is_default"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
+
+type DeviceCode struct {
+	ID               uuid.UUID `json:"id" db:"id"`
+	DeviceCode       string    `json:"device_code" db:"device_code"`
+	UserCode         string    `json:"user_code" db:"user_code"`
+	VerificationURI  string    `json:"verification_uri" db:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete,omitempty" db:"verification_uri_complete"`
+	ClientID         string    `json:"client_id" db:"client_id"`
+	Scopes           []string  `json:"scopes" db:"scopes"`
+	ExpiresAt        time.Time `json:"expires_at" db:"expires_at"`
+	Interval         int       `json:"interval" db:"interval"`
+	UserID           *uuid.UUID `json:"user_id,omitempty" db:"user_id"`
+	Authorized       bool      `json:"authorized" db:"authorized"`
+	AccessTokenID    *uuid.UUID `json:"access_token_id,omitempty" db:"access_token_id"`
+	CreatedAt        time.Time `json:"created_at" db:"created_at"`
+}

@@ -110,6 +110,22 @@ func (d *Database) createTables() error {
 			revoked BOOLEAN DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT NOW()
 		);`,
+		
+		`CREATE TABLE IF NOT EXISTS device_codes (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			device_code VARCHAR(255) UNIQUE NOT NULL,
+			user_code VARCHAR(20) UNIQUE NOT NULL,
+			verification_uri VARCHAR(512) NOT NULL,
+			verification_uri_complete VARCHAR(512),
+			client_id VARCHAR(255) NOT NULL REFERENCES clients(client_id),
+			scopes TEXT[] DEFAULT '{}',
+			expires_at TIMESTAMP NOT NULL,
+			interval_seconds INTEGER DEFAULT 5,
+			user_id UUID REFERENCES users(id),
+			authorized BOOLEAN DEFAULT FALSE,
+			access_token_id UUID REFERENCES access_tokens(id),
+			created_at TIMESTAMP DEFAULT NOW()
+		);`,
 	}
 
 	for _, query := range queries {
@@ -344,5 +360,68 @@ func (d *Database) RevokeAccessToken(tokenID uuid.UUID) error {
 func (d *Database) RevokeRefreshToken(token string) error {
 	query := `UPDATE refresh_tokens SET revoked = TRUE WHERE token = $1`
 	_, err := d.db.Exec(query, token)
+	return err
+}
+
+func (d *Database) CreateDeviceCode(deviceCode *DeviceCode) error {
+	query := `INSERT INTO device_codes (device_code, user_code, verification_uri, verification_uri_complete, client_id, scopes, expires_at, interval_seconds) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+			  RETURNING id, created_at`
+	
+	err := d.db.QueryRow(query, deviceCode.DeviceCode, deviceCode.UserCode, deviceCode.VerificationURI,
+		deviceCode.VerificationURIComplete, deviceCode.ClientID, pq.Array(deviceCode.Scopes), 
+		deviceCode.ExpiresAt, deviceCode.Interval).Scan(
+		&deviceCode.ID, &deviceCode.CreatedAt)
+	
+	return err
+}
+
+func (d *Database) GetDeviceCode(deviceCode string) (*DeviceCode, error) {
+	device := &DeviceCode{}
+	query := `SELECT id, device_code, user_code, verification_uri, verification_uri_complete, client_id, scopes, expires_at, interval_seconds, user_id, authorized, access_token_id, created_at 
+			  FROM device_codes WHERE device_code = $1 AND expires_at > NOW()`
+	
+	var scopes pq.StringArray
+	var userID, accessTokenID *uuid.UUID
+	err := d.db.QueryRow(query, deviceCode).Scan(
+		&device.ID, &device.DeviceCode, &device.UserCode, &device.VerificationURI,
+		&device.VerificationURIComplete, &device.ClientID, &scopes, &device.ExpiresAt,
+		&device.Interval, &userID, &device.Authorized, &accessTokenID, &device.CreatedAt)
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	device.Scopes = []string(scopes)
+	device.UserID = userID
+	device.AccessTokenID = accessTokenID
+	return device, nil
+}
+
+func (d *Database) GetDeviceCodeByUserCode(userCode string) (*DeviceCode, error) {
+	device := &DeviceCode{}
+	query := `SELECT id, device_code, user_code, verification_uri, verification_uri_complete, client_id, scopes, expires_at, interval_seconds, user_id, authorized, access_token_id, created_at 
+			  FROM device_codes WHERE user_code = $1 AND expires_at > NOW()`
+	
+	var scopes pq.StringArray
+	var userID, accessTokenID *uuid.UUID
+	err := d.db.QueryRow(query, userCode).Scan(
+		&device.ID, &device.DeviceCode, &device.UserCode, &device.VerificationURI,
+		&device.VerificationURIComplete, &device.ClientID, &scopes, &device.ExpiresAt,
+		&device.Interval, &userID, &device.Authorized, &accessTokenID, &device.CreatedAt)
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	device.Scopes = []string(scopes)
+	device.UserID = userID
+	device.AccessTokenID = accessTokenID
+	return device, nil
+}
+
+func (d *Database) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
+	query := `UPDATE device_codes SET user_id = $1, authorized = TRUE WHERE user_code = $2 AND expires_at > NOW()`
+	_, err := d.db.Exec(query, userID, userCode)
 	return err
 }

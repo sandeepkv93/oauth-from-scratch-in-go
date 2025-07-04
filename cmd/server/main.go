@@ -18,6 +18,7 @@ import (
 	"oauth-server/internal/monitoring"
 	"oauth-server/internal/oidc"
 	"oauth-server/pkg/jwt"
+	"oauth-server/pkg/jwks"
 )
 
 func main() {
@@ -38,7 +39,23 @@ func main() {
 		baseURL = scheme + "://" + cfg.Server.Host + ":" + cfg.Server.Port
 	}
 
-	jwtManager := jwt.NewManager(cfg.Auth.JWTSecret)
+	var jwtManager *jwt.Manager
+	var keyManager *jwks.KeyManager
+	
+	useAsymmetricKeys := os.Getenv("USE_ASYMMETRIC_KEYS") == "true"
+	if useAsymmetricKeys {
+		var err error
+		keyManager, err = jwks.NewKeyManager()
+		if err != nil {
+			log.Fatalf("Failed to create key manager: %v", err)
+		}
+		jwtManager = jwt.NewManagerWithKeyManager(cfg.Auth.JWTSecret, keyManager)
+		log.Println("Using asymmetric JWT signing (RS256)")
+	} else {
+		jwtManager = jwt.NewManager(cfg.Auth.JWTSecret)
+		log.Println("Using symmetric JWT signing (HS256)")
+	}
+	
 	authService := auth.NewService(database, jwtManager, cfg)
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, baseURL)
@@ -60,6 +77,10 @@ func main() {
 	router.HandleFunc("/metrics", metricsService.ServeMetrics).Methods("GET")
 	router.HandleFunc("/.well-known/oauth-authorization-server", wellKnownOIDCEndpoint(oidcService, baseURL)).Methods("GET")
 	router.HandleFunc("/.well-known/openid-configuration", wellKnownOIDCEndpoint(oidcService, baseURL)).Methods("GET")
+	
+	if keyManager != nil {
+		router.HandleFunc("/.well-known/jwks.json", jwksEndpoint(keyManager)).Methods("GET")
+	}
 	
 	srv := &http.Server{
 		Addr:         cfg.Server.Host + ":" + cfg.Server.Port,
@@ -109,6 +130,20 @@ func wellKnownOIDCEndpoint(oidcService *oidc.Service, baseURL string) http.Handl
 		
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Printf("Error encoding well-known response: %v", err)
+		}
+	}
+}
+
+func jwksEndpoint(keyManager *jwks.KeyManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		jwkSet := keyManager.GetJWKSet()
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.WriteHeader(http.StatusOK)
+		
+		if err := json.NewEncoder(w).Encode(jwkSet); err != nil {
+			log.Printf("Error encoding JWKS response: %v", err)
 		}
 	}
 }

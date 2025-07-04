@@ -35,6 +35,8 @@ func NewHandler(authService *auth.Service, database db.DatabaseInterface) *Handl
 func (h *Handler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/authorize", h.Authorize).Methods("GET", "POST")
 	r.HandleFunc("/token", h.Token).Methods("POST")
+	r.HandleFunc("/device_authorization", h.DeviceAuthorization).Methods("POST")
+	r.HandleFunc("/device", h.DeviceVerification).Methods("GET", "POST")
 	r.HandleFunc("/introspect", h.Introspect).Methods("POST")
 	r.HandleFunc("/userinfo", h.UserInfo).Methods("GET")
 	r.HandleFunc("/revoke", h.Revoke).Methods("POST")
@@ -356,6 +358,9 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: r.FormValue("refresh_token"),
 		Scope:        r.FormValue("scope"),
 		CodeVerifier: r.FormValue("code_verifier"),
+		Username:     r.FormValue("username"),
+		Password:     r.FormValue("password"),
+		DeviceCode:   r.FormValue("device_code"),
 	}
 
 	var response *auth.TokenResponse
@@ -368,6 +373,10 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		response, err = h.auth.RefreshAccessToken(req)
 	case "client_credentials":
 		response, err = h.auth.ClientCredentialsGrant(req)
+	case "password":
+		response, err = h.auth.ResourceOwnerPasswordCredentialsGrant(req)
+	case "urn:ietf:params:oauth:grant-type:device_code":
+		response, err = h.auth.DeviceCodeGrant(req)
 	default:
 		h.sendError(w, "unsupported_grant_type", "Grant type not supported", http.StatusBadRequest)
 		return
@@ -833,4 +842,181 @@ func (h *Handler) validateJSONInput(req interface{}) error {
 		}
 	}
 	return nil
+}
+
+func (h *Handler) DeviceAuthorization(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	if err := r.ParseForm(); err != nil {
+		h.sendError(w, "invalid_request", "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	
+	req := &auth.DeviceAuthorizationRequest{
+		ClientID: r.FormValue("client_id"),
+		Scope:    r.FormValue("scope"),
+	}
+	
+	if req.ClientID == "" {
+		h.sendError(w, "invalid_request", "client_id is required", http.StatusBadRequest)
+		return
+	}
+	
+	baseURL := "http://localhost:8080" // This should come from config
+	response, err := h.auth.InitiateDeviceAuthorization(req, baseURL)
+	if err != nil {
+		h.handleTokenError(w, err)
+		return
+	}
+	
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) DeviceVerification(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		h.showDeviceVerificationPage(w, r)
+		return
+	}
+	
+	h.handleDeviceVerificationPost(w, r)
+}
+
+func (h *Handler) showDeviceVerificationPage(w http.ResponseWriter, r *http.Request) {
+	userCode := r.URL.Query().Get("user_code")
+	
+	tmpl := `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device Verification</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            max-width: 600px; 
+            margin: 50px auto; 
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        h2 { 
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+        .form-group { margin-bottom: 20px; }
+        label { 
+            display: block; 
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        input { 
+            width: 100%; 
+            padding: 14px; 
+            border: 2px solid #e1e8ed; 
+            border-radius: 8px;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        button { 
+            width: 100%; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            padding: 14px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .device-icon {
+            text-align: center;
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="device-icon">📱</div>
+        <h2>Device Verification</h2>
+        <p>Enter the code displayed on your device to authorize the application.</p>
+        
+        <form method="post">
+            <div class="form-group">
+                <label for="user_code">Device Code:</label>
+                <input type="text" id="user_code" name="user_code" value="` + template.HTMLEscapeString(userCode) + `" required placeholder="XXXX-XXXX">
+            </div>
+            
+            <div class="form-group">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            
+            <button type="submit">Authorize Device</button>
+        </form>
+    </div>
+</body>
+</html>`
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, tmpl)
+}
+
+func (h *Handler) handleDeviceVerificationPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	
+	userCode := strings.TrimSpace(strings.ToUpper(r.FormValue("user_code")))
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+	
+	if userCode == "" || username == "" || password == "" {
+		http.Error(w, "All fields are required", http.StatusBadRequest)
+		return
+	}
+	
+	user, err := h.auth.AuthenticateUser(username, password)
+	if err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	
+	if err := h.auth.AuthorizeDeviceCode(userCode, user.ID); err != nil {
+		http.Error(w, "Invalid device code", http.StatusBadRequest)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorization Successful</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+        .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="success">✅ Device Successfully Authorized!</div>
+    <p>You can now return to your device to continue.</p>
+</body>
+</html>`)
 }
