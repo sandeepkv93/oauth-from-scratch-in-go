@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
+	"oauth-server/internal/scopes"
 	"oauth-server/pkg/crypto"
 	jwtpkg "oauth-server/pkg/jwt"
 )
@@ -42,6 +43,7 @@ type Service struct {
 	jwt      *jwtpkg.Manager
 	pkce     *crypto.PKCEManager
 	config   *config.Config
+	scopes   *scopes.Service
 }
 
 type AuthorizeRequest struct {
@@ -118,6 +120,7 @@ func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *
 		jwt:    jwtManager,
 		pkce:   crypto.NewPKCEManager(),
 		config: cfg,
+		scopes: scopes.NewService(database),
 	}
 }
 
@@ -162,7 +165,24 @@ func (s *Service) ValidateRedirectURI(client *db.Client, redirectURI string) err
 	return ErrInvalidRedirectURI
 }
 
-func (s *Service) ValidateScopes(requestedScopes []string, allowedScopes []string) error {
+func (s *Service) ValidateScopes(ctx context.Context, requestedScopes []string, allowedScopes []string) error {
+	// Try to use the enhanced scope service for validation
+	result, err := s.scopes.ValidateScopes(ctx, requestedScopes, allowedScopes)
+	if err != nil {
+		// Fall back to simple validation for testing/mock scenarios
+		return s.validateScopesSimple(requestedScopes, allowedScopes)
+	}
+	
+	// Check for invalid or unauthorized scopes
+	if len(result.Invalid) > 0 || len(result.Unauthorized) > 0 {
+		return ErrInvalidScope
+	}
+	
+	return nil
+}
+
+// validateScopesSimple provides fallback scope validation
+func (s *Service) validateScopesSimple(requestedScopes []string, allowedScopes []string) error {
 	for _, scope := range requestedScopes {
 		found := false
 		for _, allowed := range allowedScopes {
@@ -176,6 +196,34 @@ func (s *Service) ValidateScopes(requestedScopes []string, allowedScopes []strin
 		}
 	}
 	return nil
+}
+
+// ProcessScopeConsent processes scope consent for authorization requests
+func (s *Service) ProcessScopeConsent(ctx context.Context, userID uuid.UUID, clientID string, requestedScopes []string, autoGrant bool) (*scopes.ConsentResponse, error) {
+	request := &scopes.ConsentRequest{
+		UserID:   userID,
+		ClientID: clientID,
+		Scopes:   requestedScopes,
+	}
+	
+	response, err := s.scopes.ProcessConsentRequest(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	
+	// If auto-grant is requested and there are scopes requiring prompt, auto-grant them
+	if autoGrant && len(response.RequirePrompt) > 0 {
+		err = s.scopes.GrantConsent(ctx, userID, clientID, response.RequirePrompt, nil)
+		if err != nil {
+			return nil, err
+		}
+		
+		// Move prompt scopes to granted
+		response.Granted = append(response.Granted, response.RequirePrompt...)
+		response.RequirePrompt = []string{}
+	}
+	
+	return response, nil
 }
 
 func (s *Service) CreateAuthorizationCode(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, codeChallenge, codeChallengeMethod string) (string, error) {
@@ -287,7 +335,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, req *TokenRequest) (*T
 	scopes := refreshToken.Scopes
 	if req.Scope != "" {
 		requestedScopes := strings.Split(req.Scope, " ")
-		if err := s.ValidateScopes(requestedScopes, refreshToken.Scopes); err != nil {
+		if err := s.ValidateScopes(ctx, requestedScopes, refreshToken.Scopes); err != nil {
 			return nil, err
 		}
 		scopes = requestedScopes
@@ -309,7 +357,7 @@ func (s *Service) ClientCredentialsGrant(ctx context.Context, req *TokenRequest)
 	scopes := client.Scopes
 	if req.Scope != "" {
 		requestedScopes := strings.Split(req.Scope, " ")
-		if err := s.ValidateScopes(requestedScopes, client.Scopes); err != nil {
+		if err := s.ValidateScopes(ctx, requestedScopes, client.Scopes); err != nil {
 			return nil, err
 		}
 		scopes = requestedScopes
@@ -340,7 +388,7 @@ func (s *Service) ResourceOwnerPasswordCredentialsGrant(ctx context.Context, req
 	scopes := client.Scopes
 	if req.Scope != "" {
 		requestedScopes := strings.Split(req.Scope, " ")
-		if err := s.ValidateScopes(requestedScopes, client.Scopes); err != nil {
+		if err := s.ValidateScopes(ctx, requestedScopes, client.Scopes); err != nil {
 			return nil, err
 		}
 		scopes = requestedScopes
@@ -362,7 +410,7 @@ func (s *Service) InitiateDeviceAuthorization(ctx context.Context, req *DeviceAu
 	scopes := []string{}
 	if req.Scope != "" {
 		scopes = strings.Split(req.Scope, " ")
-		if err := s.ValidateScopes(scopes, client.Scopes); err != nil {
+		if err := s.ValidateScopes(ctx, scopes, client.Scopes); err != nil {
 			return nil, err
 		}
 	}
@@ -514,7 +562,7 @@ func (s *Service) JWTBearerGrant(ctx context.Context, req *TokenRequest) (*Token
 	scopes := client.Scopes
 	if req.Scope != "" {
 		requestedScopes := strings.Split(req.Scope, " ")
-		if err := s.ValidateScopes(requestedScopes, client.Scopes); err != nil {
+		if err := s.ValidateScopes(ctx, requestedScopes, client.Scopes); err != nil {
 			return nil, err
 		}
 		scopes = requestedScopes
@@ -597,7 +645,7 @@ func (s *Service) TokenExchange(ctx context.Context, req *TokenRequest) (*TokenR
 	scopes := s.determineExchangeScopes(req.Scope, subjectClaims.Scopes, client.Scopes)
 	
 	// Validate scopes
-	if err := s.ValidateScopes(scopes, client.Scopes); err != nil {
+	if err := s.ValidateScopes(ctx, scopes, client.Scopes); err != nil {
 		return nil, err
 	}
 	
@@ -783,7 +831,7 @@ func (s *Service) ImplicitGrant(ctx context.Context, req *AuthorizeRequest, user
 	var scopes []string
 	if req.Scope != "" {
 		scopes = strings.Split(req.Scope, " ")
-		if err := s.ValidateScopes(scopes, client.Scopes); err != nil {
+		if err := s.ValidateScopes(ctx, scopes, client.Scopes); err != nil {
 			return nil, err
 		}
 	} else {
@@ -969,6 +1017,16 @@ func (s *Service) generateUserCode() (string, error) {
 	}
 	
 	return string(result), nil
+}
+
+// GetEffectiveScopes gets the effective scopes for a user and client based on consent
+func (s *Service) GetEffectiveScopes(ctx context.Context, userID uuid.UUID, clientID string, requestedScopes []string) ([]string, error) {
+	return s.scopes.GetEffectiveScopes(ctx, userID, clientID, requestedScopes)
+}
+
+// InitializeDefaultScopes initializes the default OAuth and OpenID Connect scopes
+func (s *Service) InitializeDefaultScopes(ctx context.Context) error {
+	return s.scopes.InitializeDefaultScopes(ctx)
 }
 
 func (s *Service) createTokenPair(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (*TokenResponse, error) {

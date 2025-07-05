@@ -1,0 +1,1571 @@
+openapi: 3.0.3
+info:
+  title: OAuth 2.0 Server API
+  description: |
+    Comprehensive OAuth 2.0 Authorization Server with OpenID Connect support.
+    
+    This server implements multiple OAuth 2.0 grant types, OpenID Connect flows,
+    Dynamic Client Registration (RFC 7591), and Device Authorization Grant (RFC 8628).
+    
+    ## Supported Grant Types
+    - Authorization Code Grant (with PKCE support)
+    - Implicit Grant
+    - Resource Owner Password Credentials Grant
+    - Client Credentials Grant
+    - Refresh Token Grant
+    - Device Authorization Grant (RFC 8628)
+    - JWT Bearer Token Grant (RFC 7523)
+    - Token Exchange Grant (RFC 8693)
+    
+    ## OpenID Connect Features
+    - UserInfo endpoint
+    - ID Token generation
+    - Session management
+    - End session endpoint
+    
+    ## Security Features
+    - PKCE (RFC 7636)
+    - Token introspection (RFC 7662)
+    - Token revocation (RFC 7009)
+    - JWT token validation
+    - Scope-based authorization
+    
+    ## Admin Features
+    - Dynamic Client Registration (RFC 7591)
+    - Client management API
+    - User management API
+    - Comprehensive scope management
+  version: 1.0.0
+  contact:
+    name: OAuth Server API
+    url: https://github.com/oauth-server
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://oauth.example.com
+    description: Production server
+
+components:
+  securitySchemes:
+    clientCredentials:
+      type: http
+      scheme: basic
+      description: Client credentials via HTTP Basic authentication
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer token authentication
+    registrationToken:
+      type: http
+      scheme: bearer
+      description: Registration access token for DCR operations
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error code
+        error_description:
+          type: string
+          description: Human-readable error description
+      required:
+        - error
+      example:
+        error: invalid_request
+        error_description: Missing required parameter
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: Access token
+        token_type:
+          type: string
+          enum: [Bearer]
+          description: Token type
+        expires_in:
+          type: integer
+          description: Token lifetime in seconds
+        refresh_token:
+          type: string
+          description: Refresh token (optional)
+        scope:
+          type: string
+          description: Granted scopes
+        id_token:
+          type: string
+          description: OpenID Connect ID token (optional)
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      example:
+        access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        token_type: Bearer
+        expires_in: 3600
+        refresh_token: def502003c9a8c2b1e...
+        scope: openid profile email
+        id_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    IntrospectionResponse:
+      type: object
+      properties:
+        active:
+          type: boolean
+          description: Whether the token is active
+        client_id:
+          type: string
+          description: Client identifier
+        user_id:
+          type: string
+          description: User identifier
+        scope:
+          type: string
+          description: Token scopes
+        exp:
+          type: integer
+          description: Expiration time (Unix timestamp)
+        iat:
+          type: integer
+          description: Issued at time (Unix timestamp)
+        sub:
+          type: string
+          description: Subject identifier
+        aud:
+          type: string
+          description: Audience
+        iss:
+          type: string
+          description: Issuer
+        jti:
+          type: string
+          description: JWT ID
+      required:
+        - active
+      example:
+        active: true
+        client_id: test-client
+        user_id: user123
+        scope: openid profile email
+        exp: 1234567890
+        iat: 1234567890
+        sub: user123
+        aud: test-client
+        iss: http://localhost:8080
+        jti: abc123
+
+    UserInfoResponse:
+      type: object
+      properties:
+        sub:
+          type: string
+          description: Subject identifier
+        preferred_username:
+          type: string
+          description: Preferred username
+        email:
+          type: string
+          description: Email address
+        email_verified:
+          type: boolean
+          description: Whether email is verified
+        updated_at:
+          type: integer
+          description: Last update time (Unix timestamp)
+      required:
+        - sub
+      example:
+        sub: user123
+        preferred_username: testuser
+        email: test@example.com
+        email_verified: true
+        updated_at: 1234567890
+
+    DeviceAuthorizationResponse:
+      type: object
+      properties:
+        device_code:
+          type: string
+          description: Device verification code
+        user_code:
+          type: string
+          description: User verification code
+        verification_uri:
+          type: string
+          description: Verification URI
+        verification_uri_complete:
+          type: string
+          description: Complete verification URI with user code
+        expires_in:
+          type: integer
+          description: Code lifetime in seconds
+        interval:
+          type: integer
+          description: Polling interval in seconds
+      required:
+        - device_code
+        - user_code
+        - verification_uri
+        - expires_in
+      example:
+        device_code: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
+        user_code: WDJB-MJHT
+        verification_uri: http://localhost:8080/device
+        verification_uri_complete: http://localhost:8080/device?user_code=WDJB-MJHT
+        expires_in: 1800
+        interval: 5
+
+    ClientRegistrationRequest:
+      type: object
+      properties:
+        redirect_uris:
+          type: array
+          items:
+            type: string
+          description: Array of redirect URIs
+        token_endpoint_auth_method:
+          type: string
+          enum: [client_secret_basic, client_secret_post, none]
+          description: Token endpoint authentication method
+        grant_types:
+          type: array
+          items:
+            type: string
+          description: Array of grant types
+        response_types:
+          type: array
+          items:
+            type: string
+          description: Array of response types
+        client_name:
+          type: string
+          description: Human-readable client name
+        client_uri:
+          type: string
+          description: Client homepage URI
+        logo_uri:
+          type: string
+          description: Client logo URI
+        scope:
+          type: string
+          description: Space-separated list of scopes
+        contacts:
+          type: array
+          items:
+            type: string
+          description: Array of contact email addresses
+        tos_uri:
+          type: string
+          description: Terms of service URI
+        policy_uri:
+          type: string
+          description: Privacy policy URI
+        jwks_uri:
+          type: string
+          description: JSON Web Key Set URI
+        jwks:
+          type: string
+          description: JSON Web Key Set document
+        software_id:
+          type: string
+          description: Software identifier
+        software_version:
+          type: string
+          description: Software version
+        application_type:
+          type: string
+          enum: [web, native]
+          description: Application type
+      example:
+        redirect_uris:
+          - https://app.example.com/callback
+        token_endpoint_auth_method: client_secret_basic
+        grant_types:
+          - authorization_code
+          - refresh_token
+        response_types:
+          - code
+        client_name: Example Application
+        client_uri: https://app.example.com
+        logo_uri: https://app.example.com/logo.png
+        scope: openid profile email
+        contacts:
+          - admin@example.com
+        tos_uri: https://app.example.com/tos
+        policy_uri: https://app.example.com/policy
+        application_type: web
+
+    ClientRegistrationResponse:
+      type: object
+      properties:
+        client_id:
+          type: string
+          description: Client identifier
+        client_secret:
+          type: string
+          description: Client secret (for confidential clients)
+        client_id_issued_at:
+          type: integer
+          description: Client ID issued time (Unix timestamp)
+        client_secret_expires_at:
+          type: integer
+          description: Client secret expiration time (Unix timestamp, 0 = no expiration)
+        registration_access_token:
+          type: string
+          description: Registration access token
+        registration_client_uri:
+          type: string
+          description: Registration client URI
+        redirect_uris:
+          type: array
+          items:
+            type: string
+          description: Array of redirect URIs
+        token_endpoint_auth_method:
+          type: string
+          description: Token endpoint authentication method
+        grant_types:
+          type: array
+          items:
+            type: string
+          description: Array of grant types
+        response_types:
+          type: array
+          items:
+            type: string
+          description: Array of response types
+        client_name:
+          type: string
+          description: Human-readable client name
+        client_uri:
+          type: string
+          description: Client homepage URI
+        logo_uri:
+          type: string
+          description: Client logo URI
+        scope:
+          type: string
+          description: Space-separated list of scopes
+        contacts:
+          type: array
+          items:
+            type: string
+          description: Array of contact email addresses
+        tos_uri:
+          type: string
+          description: Terms of service URI
+        policy_uri:
+          type: string
+          description: Privacy policy URI
+        jwks_uri:
+          type: string
+          description: JSON Web Key Set URI
+        jwks:
+          type: string
+          description: JSON Web Key Set document
+        software_id:
+          type: string
+          description: Software identifier
+        software_version:
+          type: string
+          description: Software version
+      required:
+        - client_id
+        - client_id_issued_at
+        - registration_access_token
+        - registration_client_uri
+      example:
+        client_id: s6BhdRkqt3
+        client_secret: ZJYCqe3GGRvdrudKyZS0XhGv_Z45DuKhCUk0gBR1vZk
+        client_id_issued_at: 1234567890
+        client_secret_expires_at: 0
+        registration_access_token: this.is.an.access.token.value.ffx83
+        registration_client_uri: http://localhost:8080/register/s6BhdRkqt3
+        redirect_uris:
+          - https://app.example.com/callback
+        token_endpoint_auth_method: client_secret_basic
+        grant_types:
+          - authorization_code
+          - refresh_token
+        response_types:
+          - code
+        client_name: Example Application
+        scope: openid profile email
+
+    OAuthDiscoveryResponse:
+      type: object
+      properties:
+        issuer:
+          type: string
+          description: OAuth 2.0 authorization server identifier
+        authorization_endpoint:
+          type: string
+          description: Authorization endpoint URL
+        token_endpoint:
+          type: string
+          description: Token endpoint URL
+        userinfo_endpoint:
+          type: string
+          description: UserInfo endpoint URL
+        jwks_uri:
+          type: string
+          description: JSON Web Key Set URI
+        registration_endpoint:
+          type: string
+          description: Dynamic client registration endpoint
+        scopes_supported:
+          type: array
+          items:
+            type: string
+          description: Supported scopes
+        response_types_supported:
+          type: array
+          items:
+            type: string
+          description: Supported response types
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+          description: Supported grant types
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+          description: Supported PKCE code challenge methods
+        introspection_endpoint:
+          type: string
+          description: Token introspection endpoint
+        revocation_endpoint:
+          type: string
+          description: Token revocation endpoint
+        device_authorization_endpoint:
+          type: string
+          description: Device authorization endpoint
+        end_session_endpoint:
+          type: string
+          description: End session endpoint
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+      example:
+        issuer: http://localhost:8080
+        authorization_endpoint: http://localhost:8080/authorize
+        token_endpoint: http://localhost:8080/token
+        userinfo_endpoint: http://localhost:8080/userinfo
+        jwks_uri: http://localhost:8080/.well-known/jwks.json
+        registration_endpoint: http://localhost:8080/register
+        scopes_supported:
+          - openid
+          - profile
+          - email
+          - address
+          - phone
+          - offline_access
+        response_types_supported:
+          - code
+          - token
+          - id_token
+          - code id_token
+          - code token
+          - code token id_token
+        grant_types_supported:
+          - authorization_code
+          - implicit
+          - refresh_token
+          - client_credentials
+          - password
+          - urn:ietf:params:oauth:grant-type:device_code
+          - urn:ietf:params:oauth:grant-type:jwt-bearer
+          - urn:ietf:params:oauth:grant-type:token-exchange
+        code_challenge_methods_supported:
+          - plain
+          - S256
+        introspection_endpoint: http://localhost:8080/introspect
+        revocation_endpoint: http://localhost:8080/revoke
+        device_authorization_endpoint: http://localhost:8080/device_authorization
+        end_session_endpoint: http://localhost:8080/logout
+
+paths:
+  /authorize:
+    get:
+      summary: OAuth 2.0 Authorization Endpoint
+      description: |
+        Initiates the OAuth 2.0 authorization flow. This endpoint displays the
+        authorization page where users can grant or deny access to the client.
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code, token, id_token]
+          description: Response type (code for authorization code flow, token for implicit flow)
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: OAuth 2.0 client identifier
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Callback URI where the authorization server will redirect the user
+        - name: scope
+          in: query
+          schema:
+            type: string
+          description: Space-separated list of requested scopes
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: CSRF protection parameter maintained by the client
+        - name: code_challenge
+          in: query
+          schema:
+            type: string
+          description: PKCE code challenge
+        - name: code_challenge_method
+          in: query
+          schema:
+            type: string
+            enum: [plain, S256]
+          description: PKCE code challenge method
+        - name: nonce
+          in: query
+          schema:
+            type: string
+          description: OpenID Connect nonce parameter
+        - name: prompt
+          in: query
+          schema:
+            type: string
+            enum: [none, login, consent, select_account]
+          description: OpenID Connect prompt parameter
+        - name: max_age
+          in: query
+          schema:
+            type: integer
+          description: Maximum authentication age in seconds
+      responses:
+        '200':
+          description: Authorization page displayed
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect to redirect_uri with authorization code or error
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - OAuth 2.0 Core
+
+    post:
+      summary: Process Authorization Request
+      description: |
+        Processes the user's authorization decision (approve/deny) and redirects
+        back to the client with the authorization code or error.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                response_type:
+                  type: string
+                  enum: [code, token]
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                scope:
+                  type: string
+                state:
+                  type: string
+                code_challenge:
+                  type: string
+                code_challenge_method:
+                  type: string
+                  enum: [plain, S256]
+                nonce:
+                  type: string
+                username:
+                  type: string
+                password:
+                  type: string
+                action:
+                  type: string
+                  enum: [authorize, deny]
+              required:
+                - response_type
+                - client_id
+                - redirect_uri
+                - username
+                - password
+                - action
+      responses:
+        '302':
+          description: Redirect to redirect_uri with authorization code or error
+        '400':
+          description: Invalid request or authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - OAuth 2.0 Core
+
+  /token:
+    post:
+      summary: OAuth 2.0 Token Endpoint
+      description: |
+        Exchanges various grants for access tokens. Supports multiple grant types
+        including authorization code, refresh token, client credentials, password,
+        device flow, JWT bearer, and token exchange.
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type:
+                  type: string
+                  enum:
+                    - authorization_code
+                    - refresh_token
+                    - client_credentials
+                    - password
+                    - urn:ietf:params:oauth:grant-type:device_code
+                    - urn:ietf:params:oauth:grant-type:jwt-bearer
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                code:
+                  type: string
+                  description: Authorization code (for authorization_code grant)
+                redirect_uri:
+                  type: string
+                  description: Redirect URI (must match authorize request)
+                client_id:
+                  type: string
+                  description: Client identifier
+                client_secret:
+                  type: string
+                  description: Client secret (for confidential clients)
+                refresh_token:
+                  type: string
+                  description: Refresh token (for refresh_token grant)
+                scope:
+                  type: string
+                  description: Requested scope
+                code_verifier:
+                  type: string
+                  description: PKCE code verifier
+                username:
+                  type: string
+                  description: Username (for password grant)
+                password:
+                  type: string
+                  description: Password (for password grant)
+                device_code:
+                  type: string
+                  description: Device code (for device flow)
+                assertion:
+                  type: string
+                  description: JWT assertion (for JWT bearer grant)
+                subject_token:
+                  type: string
+                  description: Subject token (for token exchange)
+                subject_token_type:
+                  type: string
+                  description: Subject token type (for token exchange)
+                actor_token:
+                  type: string
+                  description: Actor token (for token exchange)
+                actor_token_type:
+                  type: string
+                  description: Actor token type (for token exchange)
+                requested_token_type:
+                  type: string
+                  description: Requested token type (for token exchange)
+                audience:
+                  type: string
+                  description: Audience (for token exchange)
+                resource:
+                  type: string
+                  description: Resource (for token exchange)
+              required:
+                - grant_type
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Client authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - OAuth 2.0 Core
+
+  /introspect:
+    post:
+      summary: Token Introspection Endpoint
+      description: |
+        Introspects OAuth 2.0 tokens to determine their properties and validity.
+        Implements RFC 7662.
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Token to introspect
+                token_type_hint:
+                  type: string
+                  enum: [access_token, refresh_token]
+                  description: Hint about the token type
+              required:
+                - token
+      responses:
+        '200':
+          description: Token introspection result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntrospectionResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Client authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - OAuth 2.0 Core
+
+  /revoke:
+    post:
+      summary: Token Revocation Endpoint
+      description: |
+        Revokes OAuth 2.0 tokens. Implements RFC 7009.
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Token to revoke
+                token_type_hint:
+                  type: string
+                  enum: [access_token, refresh_token]
+                  description: Hint about the token type
+                client_id:
+                  type: string
+                  description: Client identifier
+                client_secret:
+                  type: string
+                  description: Client secret
+              required:
+                - token
+      responses:
+        '200':
+          description: Token revocation successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [revoked]
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Client authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - OAuth 2.0 Core
+
+  /device_authorization:
+    post:
+      summary: Device Authorization Endpoint
+      description: |
+        Initiates the device authorization flow. Implements RFC 8628.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                client_id:
+                  type: string
+                  description: Client identifier
+                scope:
+                  type: string
+                  description: Requested scope
+              required:
+                - client_id
+      responses:
+        '200':
+          description: Device authorization response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceAuthorizationResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Device Flow
+
+  /device:
+    get:
+      summary: Device Verification Page
+      description: |
+        Displays the device verification page where users enter their device code.
+      parameters:
+        - name: user_code
+          in: query
+          schema:
+            type: string
+          description: User code from device authorization
+      responses:
+        '200':
+          description: Device verification page
+          content:
+            text/html:
+              schema:
+                type: string
+      tags:
+        - Device Flow
+
+    post:
+      summary: Device Verification
+      description: |
+        Processes device verification with user credentials.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                user_code:
+                  type: string
+                  description: Device user code
+                username:
+                  type: string
+                  description: User's username
+                password:
+                  type: string
+                  description: User's password
+              required:
+                - user_code
+                - username
+                - password
+      responses:
+        '200':
+          description: Device verification successful
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: Invalid request or authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Device Flow
+
+  /userinfo:
+    get:
+      summary: OpenID Connect UserInfo Endpoint
+      description: |
+        Returns claims about the authenticated user. Requires a valid access token.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfoResponse'
+        '401':
+          description: Invalid or missing access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - OpenID Connect
+
+  /logout:
+    get:
+      summary: End Session Endpoint
+      description: |
+        OpenID Connect end session endpoint for logging out users.
+      parameters:
+        - name: id_token_hint
+          in: query
+          schema:
+            type: string
+          description: ID token hint
+        - name: post_logout_redirect_uri
+          in: query
+          schema:
+            type: string
+          description: Where to redirect after logout
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: State parameter
+      responses:
+        '200':
+          description: Logout page
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect after logout
+      tags:
+        - OpenID Connect
+
+    post:
+      summary: Confirm Logout
+      description: |
+        Confirms the logout action.
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect after logout
+      tags:
+        - OpenID Connect
+
+  /session/check:
+    get:
+      summary: Session Status Check
+      description: |
+        Checks the current session status for session management.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Client identifier
+        - name: session_state
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Session state
+      responses:
+        '200':
+          description: Session status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_state:
+                    type: string
+                  client_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [unchanged, changed, error]
+      tags:
+        - Session Management
+
+  /session/iframe:
+    get:
+      summary: Session Management IFrame
+      description: |
+        Returns an HTML page with JavaScript for session monitoring.
+      responses:
+        '200':
+          description: Session iframe page
+          content:
+            text/html:
+              schema:
+                type: string
+      tags:
+        - Session Management
+
+  /register:
+    post:
+      summary: Dynamic Client Registration
+      description: |
+        Registers a new OAuth 2.0 client dynamically. Implements RFC 7591.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientRegistrationRequest'
+      responses:
+        '201':
+          description: Client registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRegistrationResponse'
+        '400':
+          description: Invalid client metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Client registration not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Dynamic Client Registration
+
+  /register/{client_id}:
+    get:
+      summary: Retrieve Client Configuration
+      description: |
+        Retrieves the configuration of a dynamically registered client.
+      security:
+        - registrationToken: []
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Client identifier
+      responses:
+        '200':
+          description: Client configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRegistrationResponse'
+        '401':
+          description: Invalid registration access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Client not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Dynamic Client Registration
+
+    put:
+      summary: Update Client Configuration
+      description: |
+        Updates the configuration of a dynamically registered client.
+      security:
+        - registrationToken: []
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Client identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientRegistrationRequest'
+      responses:
+        '200':
+          description: Client updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRegistrationResponse'
+        '400':
+          description: Invalid client metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid registration access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Client not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Dynamic Client Registration
+
+    delete:
+      summary: Delete Client
+      description: |
+        Deletes a dynamically registered client.
+      security:
+        - registrationToken: []
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Client identifier
+      responses:
+        '204':
+          description: Client deleted successfully
+        '401':
+          description: Invalid registration access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Client not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Dynamic Client Registration
+
+  /api/clients:
+    get:
+      summary: List OAuth Clients
+      description: |
+        Lists all registered OAuth 2.0 clients (admin endpoint).
+      responses:
+        '200':
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    client_id:
+                      type: string
+                    name:
+                      type: string
+                    redirect_uris:
+                      type: array
+                      items:
+                        type: string
+                    scopes:
+                      type: array
+                      items:
+                        type: string
+                    grant_types:
+                      type: array
+                      items:
+                        type: string
+                    is_public:
+                      type: boolean
+                    created_at:
+                      type: string
+                      format: date-time
+      tags:
+        - Admin API
+
+    post:
+      summary: Create OAuth Client
+      description: |
+        Creates a new OAuth 2.0 client (admin endpoint).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Client name
+                redirect_uris:
+                  type: array
+                  items:
+                    type: string
+                  description: Redirect URIs
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  description: Allowed scopes
+                grant_types:
+                  type: array
+                  items:
+                    type: string
+                  description: Allowed grant types
+                is_public:
+                  type: boolean
+                  description: Whether the client is public
+              required:
+                - name
+                - redirect_uris
+      responses:
+        '201':
+          description: Client created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_id:
+                    type: string
+                  client_secret:
+                    type: string
+                  name:
+                    type: string
+                  redirect_uris:
+                    type: array
+                    items:
+                      type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  grant_types:
+                    type: array
+                    items:
+                      type: string
+                  is_public:
+                    type: boolean
+                  created_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Admin API
+
+  /api/users:
+    post:
+      summary: Create User
+      description: |
+        Creates a new user account (admin endpoint).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  description: Username
+                email:
+                  type: string
+                  description: Email address
+                password:
+                  type: string
+                  description: Password
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  description: User scopes
+              required:
+                - username
+                - email
+                - password
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  username:
+                    type: string
+                  email:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+                  created_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Admin API
+
+  /login:
+    get:
+      summary: Login Page
+      description: |
+        Displays the user login page.
+      responses:
+        '200':
+          description: Login page
+          content:
+            text/html:
+              schema:
+                type: string
+      tags:
+        - Authentication
+
+    post:
+      summary: User Login
+      description: |
+        Authenticates a user with username and password.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  description: Username
+                password:
+                  type: string
+                  description: Password
+              required:
+                - username
+                - password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  user_id:
+                    type: string
+        '400':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      tags:
+        - Authentication
+
+  /.well-known/oauth-authorization-server:
+    get:
+      summary: OAuth Authorization Server Metadata
+      description: |
+        Returns OAuth 2.0 authorization server metadata for discovery.
+      responses:
+        '200':
+          description: Authorization server metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthDiscoveryResponse'
+      tags:
+        - Discovery
+
+  /.well-known/openid-configuration:
+    get:
+      summary: OpenID Connect Discovery
+      description: |
+        Returns OpenID Connect discovery metadata.
+      responses:
+        '200':
+          description: OpenID Connect configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthDiscoveryResponse'
+      tags:
+        - Discovery
+
+  /.well-known/jwks.json:
+    get:
+      summary: JSON Web Key Set
+      description: |
+        Returns the JSON Web Key Set containing public keys for token verification.
+      responses:
+        '200':
+          description: JSON Web Key Set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty:
+                          type: string
+                        use:
+                          type: string
+                        kid:
+                          type: string
+                        n:
+                          type: string
+                        e:
+                          type: string
+                        alg:
+                          type: string
+      tags:
+        - Discovery
+
+  /health:
+    get:
+      summary: Health Check
+      description: |
+        Returns the health status of the OAuth server.
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  version:
+                    type: string
+      tags:
+        - Monitoring
+
+  /metrics:
+    get:
+      summary: Prometheus Metrics
+      description: |
+        Returns Prometheus-compatible metrics for monitoring.
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+      tags:
+        - Monitoring
+
+tags:
+  - name: OAuth 2.0 Core
+    description: Core OAuth 2.0 endpoints for authorization and token exchange
+  - name: OpenID Connect
+    description: OpenID Connect endpoints for authentication and user information
+  - name: Dynamic Client Registration
+    description: RFC 7591 - Dynamic Client Registration endpoints
+  - name: Device Flow
+    description: RFC 8628 - Device Authorization Grant endpoints
+  - name: Admin API
+    description: Administrative endpoints for managing clients and users
+  - name: Authentication
+    description: User authentication endpoints
+  - name: Session Management
+    description: Session management and monitoring endpoints
+  - name: Discovery
+    description: OAuth 2.0 and OpenID Connect discovery endpoints
+  - name: Monitoring
+    description: Health check and metrics endpoints

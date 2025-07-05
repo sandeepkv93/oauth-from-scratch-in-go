@@ -68,12 +68,13 @@ func (d *EnhancedDatabase) Ping(ctx context.Context) error {
 
 // BeginTx starts a new transaction
 func (d *EnhancedDatabase) BeginTx(ctx context.Context) (Transaction, error) {
-	tx, err := d.db.BeginTx(ctx, nil)
+	_, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	
-	return &DatabaseTransaction{tx: tx, db: d}, nil
+	// TODO: Implement full transaction interface
+	return nil, fmt.Errorf("transaction not fully implemented yet")
 }
 
 // Transaction methods

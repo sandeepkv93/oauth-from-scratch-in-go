@@ -1,0 +1,260 @@
+{{template "admin/layout.html" .}}
+
+{{define "content"}}
+<div class="row">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">{{.Stats.TotalClients}}</h5>
+                        <p class="card-text">OAuth Clients</p>
+                    </div>
+                    <i class="fas fa-desktop fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-success mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">{{.Stats.TotalUsers}}</h5>
+                        <p class="card-text">Users</p>
+                    </div>
+                    <i class="fas fa-users fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-info mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">{{.Stats.ActiveTokens}}</h5>
+                        <p class="card-text">Active Tokens</p>
+                    </div>
+                    <i class="fas fa-ticket-alt fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-warning mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">{{.Stats.TotalScopes}}</h5>
+                        <p class="card-text">Scopes</p>
+                    </div>
+                    <i class="fas fa-key fa-2x"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Recent Activity</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Event</th>
+                                <th>Client</th>
+                                <th>User</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .RecentActivity}}
+                            <tr>
+                                <td>{{.Timestamp.Format "15:04:05"}}</td>
+                                <td>{{.Event}}</td>
+                                <td>{{.ClientID}}</td>
+                                <td>{{.UserID}}</td>
+                                <td>
+                                    {{if eq .Status "success"}}
+                                    <span class="badge bg-success badge-status">Success</span>
+                                    {{else}}
+                                    <span class="badge bg-danger badge-status">Failed</span>
+                                    {{end}}
+                                </td>
+                            </tr>
+                            {{else}}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">No recent activity</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Server Info</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-5">Version:</dt>
+                    <dd class="col-sm-7">{{.ServerInfo.Version}}</dd>
+                    
+                    <dt class="col-sm-5">Uptime:</dt>
+                    <dd class="col-sm-7">{{.ServerInfo.Uptime}}</dd>
+                    
+                    <dt class="col-sm-5">Start Time:</dt>
+                    <dd class="col-sm-7">{{.ServerInfo.StartTime.Format "2006-01-02 15:04:05"}}</dd>
+                    
+                    <dt class="col-sm-5">Go Version:</dt>
+                    <dd class="col-sm-7">{{.ServerInfo.GoVersion}}</dd>
+                    
+                    <dt class="col-sm-5">Database:</dt>
+                    <dd class="col-sm-7">
+                        {{if .ServerInfo.DatabaseHealthy}}
+                        <span class="badge bg-success badge-status">Healthy</span>
+                        {{else}}
+                        <span class="badge bg-danger badge-status">Unhealthy</span>
+                        {{end}}
+                    </dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="/admin/clients/new" class="btn btn-primary">
+                        <i class="fas fa-plus me-2"></i>Create Client
+                    </a>
+                    <a href="/admin/users/new" class="btn btn-success">
+                        <i class="fas fa-user-plus me-2"></i>Create User
+                    </a>
+                    <a href="/admin/scopes/new" class="btn btn-info">
+                        <i class="fas fa-key me-2"></i>Create Scope
+                    </a>
+                    <button class="btn btn-warning" onclick="cleanupExpiredTokens()">
+                        <i class="fas fa-trash me-2"></i>Cleanup Tokens
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Grant Type Usage</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="grantTypeChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Token Issuance (Last 7 Days)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="tokenChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Grant Type Chart
+    const grantTypeCtx = document.getElementById('grantTypeChart').getContext('2d');
+    new Chart(grantTypeCtx, {
+        type: 'doughnut',
+        data: {
+            labels: {{.Charts.GrantTypes.Labels}},
+            datasets: [{
+                data: {{.Charts.GrantTypes.Data}},
+                backgroundColor: [
+                    '#FF6384',
+                    '#36A2EB',
+                    '#FFCE56',
+                    '#4BC0C0',
+                    '#9966FF',
+                    '#FF9F40'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Token Issuance Chart
+    const tokenCtx = document.getElementById('tokenChart').getContext('2d');
+    new Chart(tokenCtx, {
+        type: 'line',
+        data: {
+            labels: {{.Charts.TokenIssuance.Labels}},
+            datasets: [{
+                label: 'Tokens Issued',
+                data: {{.Charts.TokenIssuance.Data}},
+                borderColor: '#36A2EB',
+                backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    function cleanupExpiredTokens() {
+        if (confirm('Are you sure you want to clean up expired tokens?')) {
+            fetch('/admin/api/cleanup/tokens', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Cleaned up ${data.count} expired tokens`);
+                    location.reload();
+                } else {
+                    alert('Failed to cleanup tokens: ' + data.error);
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error);
+            });
+        }
+    }
+</script>
+{{end}}
