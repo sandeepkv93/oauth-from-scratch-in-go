@@ -50,21 +50,28 @@ func NewManagerWithKeyManager(secret string, keyManager KeyManager) *Manager {
 }
 
 func (m *Manager) GenerateAccessToken(userID uuid.UUID, clientID string, scopes []string, tokenID uuid.UUID, ttl time.Duration) (string, error) {
+	return m.GenerateAccessTokenWithClaims(userID, clientID, scopes, tokenID, ttl, nil)
+}
+
+func (m *Manager) GenerateAccessTokenWithClaims(userID uuid.UUID, clientID string, scopes []string, tokenID uuid.UUID, ttl time.Duration, customClaims map[string]interface{}) (string, error) {
 	now := time.Now()
-	claims := Claims{
-		UserID:   userID,
-		ClientID: clientID,
-		Scopes:   scopes,
-		TokenID:  tokenID,
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-			NotBefore: jwt.NewNumericDate(now),
-			Issuer:    "oauth-server",
-			Subject:   userID.String(),
-			Audience:  []string{clientID},
-			ID:        tokenID.String(),
-		},
+	claims := jwt.MapClaims{
+		"user_id":   userID.String(),
+		"client_id": clientID,
+		"scopes":    scopes,
+		"token_id":  tokenID.String(),
+		"iat":       now.Unix(),
+		"exp":       now.Add(ttl).Unix(),
+		"nbf":       now.Unix(),
+		"iss":       "oauth-server",
+		"sub":       userID.String(),
+		"aud":       []string{clientID},
+		"jti":       tokenID.String(),
+	}
+
+	// Add custom claims
+	for key, value := range customClaims {
+		claims[key] = value
 	}
 
 	var token *jwt.Token

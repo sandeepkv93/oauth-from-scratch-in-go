@@ -417,18 +417,26 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	
 	req := &auth.TokenRequest{
-		GrantType:    r.FormValue("grant_type"),
-		Code:         r.FormValue("code"),
-		RedirectURI:  r.FormValue("redirect_uri"),
-		ClientID:     r.FormValue("client_id"),
-		ClientSecret: r.FormValue("client_secret"),
-		RefreshToken: r.FormValue("refresh_token"),
-		Scope:        r.FormValue("scope"),
-		CodeVerifier: r.FormValue("code_verifier"),
-		Username:     r.FormValue("username"),
-		Password:     r.FormValue("password"),
-		DeviceCode:   r.FormValue("device_code"),
-		Assertion:    r.FormValue("assertion"),
+		GrantType:          r.FormValue("grant_type"),
+		Code:               r.FormValue("code"),
+		RedirectURI:        r.FormValue("redirect_uri"),
+		ClientID:           r.FormValue("client_id"),
+		ClientSecret:       r.FormValue("client_secret"),
+		RefreshToken:       r.FormValue("refresh_token"),
+		Scope:              r.FormValue("scope"),
+		CodeVerifier:       r.FormValue("code_verifier"),
+		Username:           r.FormValue("username"),
+		Password:           r.FormValue("password"),
+		DeviceCode:         r.FormValue("device_code"),
+		Assertion:          r.FormValue("assertion"),
+		// Token Exchange fields (RFC 8693)
+		SubjectToken:       r.FormValue("subject_token"),
+		SubjectTokenType:   r.FormValue("subject_token_type"),
+		ActorToken:         r.FormValue("actor_token"),
+		ActorTokenType:     r.FormValue("actor_token_type"),
+		RequestedTokenType: r.FormValue("requested_token_type"),
+		Audience:           r.FormValue("audience"),
+		Resource:           r.FormValue("resource"),
 	}
 
 	var response *auth.TokenResponse
@@ -447,6 +455,8 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		response, err = h.auth.DeviceCodeGrant(r.Context(), req)
 	case "urn:ietf:params:oauth:grant-type:jwt-bearer":
 		response, err = h.auth.JWTBearerGrant(r.Context(), req)
+	case "urn:ietf:params:oauth:grant-type:token-exchange":
+		response, err = h.auth.TokenExchange(r.Context(), req)
 	default:
 		h.sendError(w, "unsupported_grant_type", "Grant type not supported", http.StatusBadRequest)
 		return
