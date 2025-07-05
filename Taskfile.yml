@@ -1,9 +1,5 @@
 version: '3'
 
-includes:
-  k8s: .taskfile/k8s.yml
-  git: .taskfile/git.yml
-
 vars:
   APP_NAME: oauth-server
   BUILD_DIR: bin
