@@ -201,6 +201,9 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 		Security: config.SecurityConfig{
 			MinPasswordLength: 8,
 		},
+		Server: config.ServerConfig{
+			BaseURL: "http://localhost:8080",
+		},
 	}
 
 	jwtManager := jwt.NewManager(cfg.Auth.JWTSecret)
@@ -224,7 +227,7 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 		Name:         "Test Client",
 		RedirectURIs: []string{"http://localhost:8080/callback"},
 		Scopes:       []string{"openid", "profile", "email", "read", "write"},
-		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password"},
+		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
 		IsPublic:     false,
 	}
 	mockDatabase.CreateClient(testClient)

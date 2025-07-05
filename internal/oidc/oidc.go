@@ -152,7 +152,7 @@ func (s *Service) GetWellKnownConfiguration(baseURL string) map[string]interface
 		"scopes_supported":                   s.GetSupportedScopes(),
 		"response_types_supported":           []string{"code", "id_token", "token id_token", "code id_token", "code token", "code token id_token"},
 		"response_modes_supported":           []string{"query", "fragment", "form_post"},
-		"grant_types_supported":              []string{"authorization_code", "implicit", "refresh_token", "client_credentials", "password", "urn:ietf:params:oauth:grant-type:device_code"},
+		"grant_types_supported":              []string{"authorization_code", "implicit", "refresh_token", "client_credentials", "password", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
 		"subject_types_supported":            []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"HS256", "RS256"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic", "none"},

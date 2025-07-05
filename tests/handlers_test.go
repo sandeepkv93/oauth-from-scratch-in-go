@@ -13,8 +13,7 @@ import (
 )
 
 func TestHandlerCreation(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	if handler == nil {
 		t.Fatal("Handler should not be nil")
@@ -22,8 +21,7 @@ func TestHandlerCreation(t *testing.T) {
 }
 
 func TestAuthorizeGetRequest(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:8080/callback&scope=openid%20profile&state=xyz", nil)
 	rr := httptest.NewRecorder()
@@ -45,8 +43,7 @@ func TestAuthorizeGetRequest(t *testing.T) {
 }
 
 func TestAuthorizeInvalidResponseType(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/authorize?response_type=token&client_id=test-client", nil)
 	rr := httptest.NewRecorder()
@@ -59,8 +56,7 @@ func TestAuthorizeInvalidResponseType(t *testing.T) {
 }
 
 func TestAuthorizeInvalidClient(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=invalid-client", nil)
 	rr := httptest.NewRecorder()
@@ -73,8 +69,7 @@ func TestAuthorizeInvalidClient(t *testing.T) {
 }
 
 func TestAuthorizeInvalidRedirectURI(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/authorize?response_type=code&client_id=test-client&redirect_uri=http://evil.com/callback", nil)
 	rr := httptest.NewRecorder()
@@ -87,8 +82,7 @@ func TestAuthorizeInvalidRedirectURI(t *testing.T) {
 }
 
 func TestAuthorizePostDeny(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("action", "deny")
@@ -113,8 +107,7 @@ func TestAuthorizePostDeny(t *testing.T) {
 }
 
 func TestAuthorizePostInvalidCredentials(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("action", "authorize")
@@ -141,8 +134,7 @@ func TestAuthorizePostInvalidCredentials(t *testing.T) {
 }
 
 func TestAuthorizePostSuccess(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("action", "authorize")
@@ -174,8 +166,7 @@ func TestAuthorizePostSuccess(t *testing.T) {
 }
 
 func TestTokenEndpointUnsupportedGrantType(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("grant_type", "unsupported_grant")
@@ -203,8 +194,7 @@ func TestTokenEndpointUnsupportedGrantType(t *testing.T) {
 }
 
 func TestIntrospectMissingToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 
@@ -220,8 +210,7 @@ func TestIntrospectMissingToken(t *testing.T) {
 }
 
 func TestIntrospectInvalidToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("token", "invalid-token")
@@ -247,8 +236,7 @@ func TestIntrospectInvalidToken(t *testing.T) {
 }
 
 func TestUserInfoMissingToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/userinfo", nil)
 	rr := httptest.NewRecorder()
@@ -261,8 +249,7 @@ func TestUserInfoMissingToken(t *testing.T) {
 }
 
 func TestUserInfoInvalidToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/userinfo", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
@@ -276,8 +263,7 @@ func TestUserInfoInvalidToken(t *testing.T) {
 }
 
 func TestLoginGetRequest(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/login", nil)
 	rr := httptest.NewRecorder()
@@ -295,8 +281,7 @@ func TestLoginGetRequest(t *testing.T) {
 }
 
 func TestLoginPostSuccess(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("username", "testuser")
@@ -323,8 +308,7 @@ func TestLoginPostSuccess(t *testing.T) {
 }
 
 func TestLoginPostInvalidCredentials(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("username", "testuser")
@@ -342,8 +326,7 @@ func TestLoginPostInvalidCredentials(t *testing.T) {
 }
 
 func TestCreateClient(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	clientData := map[string]interface{}{
 		"name":          "Test Client App",
@@ -383,8 +366,7 @@ func TestCreateClient(t *testing.T) {
 }
 
 func TestCreatePublicClient(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	clientData := map[string]interface{}{
 		"name":          "Public Client App",
@@ -416,8 +398,7 @@ func TestCreatePublicClient(t *testing.T) {
 }
 
 func TestCreateClientInvalidJSON(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("POST", "/api/clients", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -431,8 +412,7 @@ func TestCreateClientInvalidJSON(t *testing.T) {
 }
 
 func TestCreateUser(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	userData := map[string]interface{}{
 		"username": "newuser",
@@ -471,8 +451,7 @@ func TestCreateUser(t *testing.T) {
 }
 
 func TestCreateUserInvalidJSON(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("POST", "/api/users", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -486,8 +465,7 @@ func TestCreateUserInvalidJSON(t *testing.T) {
 }
 
 func TestListClients(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	req := httptest.NewRequest("GET", "/api/clients", nil)
 	rr := httptest.NewRecorder()
@@ -509,8 +487,7 @@ func TestListClients(t *testing.T) {
 }
 
 func TestExtractBearerToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	testCases := []struct {
 		authHeader   string
@@ -541,8 +518,7 @@ func TestExtractBearerToken(t *testing.T) {
 }
 
 func TestResponseContentTypes(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	endpoints := []struct {
 		method   string

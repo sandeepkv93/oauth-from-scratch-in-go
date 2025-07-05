@@ -51,7 +51,7 @@ func setupIntegrationTest() *IntegrationTestSuite {
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, "http://localhost:8080")
 	
-	handler := handlers.NewHandler(authService, mockDatabase)
+	handler := handlers.NewHandler(authService, mockDatabase, oidcService)
 	middlewareManager := middleware.NewMiddleware(authService, metricsService)
 	
 	router := mux.NewRouter()

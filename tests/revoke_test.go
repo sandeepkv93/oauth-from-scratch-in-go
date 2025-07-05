@@ -18,8 +18,7 @@ import (
 )
 
 func TestRevokeEndpoint(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, _ := setupTestHandler()
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -57,8 +56,7 @@ func TestRevokeEndpoint(t *testing.T) {
 }
 
 func TestRevokeMissingToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("client_id", "test-client")
@@ -85,8 +83,7 @@ func TestRevokeMissingToken(t *testing.T) {
 }
 
 func TestRevokeWithBasicAuth(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, _ := setupTestHandler()
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -116,8 +113,7 @@ func TestRevokeWithBasicAuth(t *testing.T) {
 }
 
 func TestRevokeInvalidClient(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, _, _ := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("token", "some-token")
@@ -145,8 +141,7 @@ func TestRevokeInvalidClient(t *testing.T) {
 }
 
 func TestRevokeMissingClientAuth(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("token", "some-token")
@@ -163,8 +158,7 @@ func TestRevokeMissingClientAuth(t *testing.T) {
 }
 
 func TestRevokeRefreshToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	userID := mockDB.users["testuser"].ID
 	code, err := authService.CreateAuthorizationCode(
@@ -208,8 +202,7 @@ func TestRevokeRefreshToken(t *testing.T) {
 }
 
 func TestRevokeAccessTokenHint(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -239,8 +232,7 @@ func TestRevokeAccessTokenHint(t *testing.T) {
 }
 
 func TestRevokeTokenWrongClient(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -281,8 +273,7 @@ func TestRevokeTokenWrongClient(t *testing.T) {
 }
 
 func TestRevokeNonExistentToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("token", "non-existent-token")
@@ -358,8 +349,7 @@ func TestExtractBasicAuth(t *testing.T) {
 				req.Header.Set("Authorization", tc.authHeader)
 			}
 
-			authService, mockDB := setupTestAuth()
-			handler := handlers.NewHandler(authService, mockDB)
+			handler, _, _ := setupTestHandler()
 
 			data := url.Values{}
 			data.Set("token", "test-token")
@@ -383,8 +373,7 @@ func TestExtractBasicAuth(t *testing.T) {
 }
 
 func TestRevokeContentType(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	data := url.Values{}
 	data.Set("token", "test-token")
@@ -404,8 +393,7 @@ func TestRevokeContentType(t *testing.T) {
 }
 
 func TestTryRevokeAccessToken(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	_, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -444,8 +432,7 @@ func TestTryRevokeAccessToken(t *testing.T) {
 }
 
 func TestTryRevokeRefreshTokenThroughEndpoint(t *testing.T) {
-	authService, mockDB := setupTestAuth()
-	handler := handlers.NewHandler(authService, mockDB)
+	handler, authService, mockDB := setupTestHandler()
 
 	refreshToken := &db.RefreshToken{
 		Token:         "test-refresh-token",

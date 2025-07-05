@@ -382,6 +382,7 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		Username:     r.FormValue("username"),
 		Password:     r.FormValue("password"),
 		DeviceCode:   r.FormValue("device_code"),
+		Assertion:    r.FormValue("assertion"),
 	}
 
 	var response *auth.TokenResponse
@@ -398,6 +399,8 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		response, err = h.auth.ResourceOwnerPasswordCredentialsGrant(req)
 	case "urn:ietf:params:oauth:grant-type:device_code":
 		response, err = h.auth.DeviceCodeGrant(req)
+	case "urn:ietf:params:oauth:grant-type:jwt-bearer":
+		response, err = h.auth.JWTBearerGrant(req)
 	default:
 		h.sendError(w, "unsupported_grant_type", "Grant type not supported", http.StatusBadRequest)
 		return

@@ -160,3 +160,9 @@ func (m *Manager) SignToken(token *jwt.Token) (string, error) {
 	}
 	return token.SignedString(m.secret)
 }
+
+func (m *Manager) ParseUnverifiedToken(tokenString string) (*jwt.Token, error) {
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+	return token, err
+}
