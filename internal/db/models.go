@@ -17,6 +17,24 @@ type Client struct {
 	IsPublic     bool      `json:"is_public" db:"is_public"`
 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	
+	// Dynamic Client Registration fields (RFC 7591)
+	ClientName              *string    `json:"client_name,omitempty" db:"client_name"`
+	ClientURI               *string    `json:"client_uri,omitempty" db:"client_uri"`
+	LogoURI                 *string    `json:"logo_uri,omitempty" db:"logo_uri"`
+	ContactEmails           []string   `json:"contacts,omitempty" db:"contacts"`
+	TosURI                  *string    `json:"tos_uri,omitempty" db:"tos_uri"`
+	PolicyURI               *string    `json:"policy_uri,omitempty" db:"policy_uri"`
+	JwksURI                 *string    `json:"jwks_uri,omitempty" db:"jwks_uri"`
+	Jwks                    *string    `json:"jwks,omitempty" db:"jwks"`
+	SoftwareID              *string    `json:"software_id,omitempty" db:"software_id"`
+	SoftwareVersion         *string    `json:"software_version,omitempty" db:"software_version"`
+	TokenEndpointAuthMethod *string    `json:"token_endpoint_auth_method,omitempty" db:"token_endpoint_auth_method"`
+	ResponseTypes           []string   `json:"response_types,omitempty" db:"response_types"`
+	ClientSecretExpiresAt   *time.Time `json:"client_secret_expires_at,omitempty" db:"client_secret_expires_at"`
+	RegistrationAccessToken *string    `json:"registration_access_token,omitempty" db:"registration_access_token"`
+	RegistrationClientURI   *string    `json:"registration_client_uri,omitempty" db:"registration_client_uri"`
+	ClientIDIssuedAt        *time.Time `json:"client_id_issued_at,omitempty" db:"client_id_issued_at"`
 }
 
 type User struct {
@@ -69,10 +87,48 @@ type RefreshToken struct {
 }
 
 type Scope struct {
+	ID            uuid.UUID  `json:"id" db:"id"`
+	Name          string     `json:"name" db:"name"`
+	Description   string     `json:"description" db:"description"`
+	Category      string     `json:"category,omitempty" db:"category"`
+	ParentScope   *string    `json:"parent_scope,omitempty" db:"parent_scope"`
+	IsDefault     bool       `json:"is_default" db:"is_default"`
+	IsSystem      bool       `json:"is_system" db:"is_system"`
+	RequiresConsent bool     `json:"requires_consent" db:"requires_consent"`
+	IconURL       *string    `json:"icon_url,omitempty" db:"icon_url"`
+	DisplayOrder  int        `json:"display_order" db:"display_order"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+}
+
+// ScopeConsent tracks user consent for specific scopes
+type ScopeConsent struct {
+	ID        uuid.UUID `json:"id" db:"id"`
+	UserID    uuid.UUID `json:"user_id" db:"user_id"`
+	ClientID  string    `json:"client_id" db:"client_id"`
+	Scope     string    `json:"scope" db:"scope"`
+	Granted   bool      `json:"granted" db:"granted"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty" db:"expires_at"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// ScopeGroup allows organizing scopes into logical groups
+type ScopeGroup struct {
 	ID          uuid.UUID `json:"id" db:"id"`
 	Name        string    `json:"name" db:"name"`
 	Description string    `json:"description" db:"description"`
-	IsDefault   bool      `json:"is_default" db:"is_default"`
+	DisplayName string    `json:"display_name" db:"display_name"`
+	IconURL     *string   `json:"icon_url,omitempty" db:"icon_url"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// ScopeGroupMembership links scopes to groups
+type ScopeGroupMembership struct {
+	ID          uuid.UUID `json:"id" db:"id"`
+	ScopeID     uuid.UUID `json:"scope_id" db:"scope_id"`
+	GroupID     uuid.UUID `json:"group_id" db:"group_id"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 

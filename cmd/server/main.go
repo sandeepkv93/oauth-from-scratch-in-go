@@ -10,13 +10,16 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"oauth-server/internal/admin"
 	"oauth-server/internal/auth"
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
+	"oauth-server/internal/dcr"
 	"oauth-server/internal/handlers"
 	"oauth-server/internal/middleware"
 	"oauth-server/internal/monitoring"
 	"oauth-server/internal/oidc"
+	"oauth-server/internal/scopes"
 	"oauth-server/pkg/jwt"
 	"oauth-server/pkg/jwks"
 )
@@ -60,7 +63,26 @@ func main() {
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, baseURL)
 	
-	handler := handlers.NewHandler(authService, database, oidcService)
+	// Setup scope management service
+	scopeService := scopes.NewService(database)
+	
+	// Setup Dynamic Client Registration service
+	dcrConfig := &dcr.Config{
+		RegistrationEnabled:  true,
+		DefaultScopes:        []string{"openid", "profile", "email"},
+		DefaultGrantTypes:    []string{"authorization_code", "refresh_token"},
+		DefaultResponseTypes: []string{"code"},
+		BaseURL:             baseURL,
+	}
+	dcrService := dcr.NewService(database, scopeService, dcrConfig)
+	
+	// Setup Admin service
+	adminConfig := &admin.Config{
+		Version: "1.0.0",
+	}
+	adminService := admin.NewService(database, authService, scopeService, adminConfig)
+	
+	handler := handlers.NewHandler(authService, database, oidcService, dcrService, adminService)
 	middlewareManager := middleware.NewMiddleware(authService, metricsService)
 	
 	router := mux.NewRouter()

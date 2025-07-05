@@ -1,0 +1,312 @@
+{{template "admin/layout.html" .}}
+
+{{define "content"}}
+<div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0">
+            {{if .Client.ClientID}}Edit Client{{else}}Create New Client{{end}}
+        </h5>
+    </div>
+    <div class="card-body">
+        <form method="POST" id="clientForm">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Client Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="name" name="name" value="{{.Client.Name}}" required>
+                        <div class="form-text">Human-readable name for the client application</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="client_uri" class="form-label">Client URI</label>
+                        <input type="url" class="form-control" id="client_uri" name="client_uri" 
+                               value="{{if .Client.ClientURI}}{{.Client.ClientURI}}{{end}}">
+                        <div class="form-text">Homepage URI of the client application</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="application_type" class="form-label">Application Type</label>
+                        <select class="form-select" id="application_type" name="application_type" onchange="updateClientType()">
+                            <option value="web" {{if eq .Client.ApplicationType "web"}}selected{{end}}>Web Application</option>
+                            <option value="native" {{if eq .Client.ApplicationType "native"}}selected{{end}}>Native Application</option>
+                        </select>
+                        <div class="form-text">Type of OAuth 2.0 client application</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="is_public" class="form-label">Client Type</label>
+                        <select class="form-select" id="is_public" name="is_public">
+                            <option value="false" {{if not .Client.IsPublic}}selected{{end}}>Confidential</option>
+                            <option value="true" {{if .Client.IsPublic}}selected{{end}}>Public</option>
+                        </select>
+                        <div class="form-text">Public clients cannot maintain secret credentials</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="redirect_uris" class="form-label">Redirect URIs <span class="text-danger">*</span></label>
+                <div id="redirect-uris-container">
+                    {{range $index, $uri := .Client.RedirectURIs}}
+                    <div class="input-group mb-2">
+                        <input type="url" class="form-control" name="redirect_uris" value="{{$uri}}" required>
+                        <button type="button" class="btn btn-outline-danger" onclick="removeRedirectUri(this)">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    {{else}}
+                    <div class="input-group mb-2">
+                        <input type="url" class="form-control" name="redirect_uris" placeholder="https://example.com/callback" required>
+                        <button type="button" class="btn btn-outline-danger" onclick="removeRedirectUri(this)">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    {{end}}
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addRedirectUri()">
+                    <i class="fas fa-plus me-1"></i>Add Redirect URI
+                </button>
+                <div class="form-text">Valid redirect URIs for authorization callbacks</div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Grant Types</label>
+                        <div class="form-check-container">
+                            {{$clientGrantTypes := .Client.GrantTypes}}
+                            {{range .AvailableGrantTypes}}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="grant_types" value="{{.}}" id="grant_{{.}}"
+                                       {{if contains $clientGrantTypes .}}checked{{end}}>
+                                <label class="form-check-label" for="grant_{{.}}">
+                                    {{.}}
+                                </label>
+                            </div>
+                            {{end}}
+                        </div>
+                        <div class="form-text">OAuth 2.0 grant types this client can use</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Response Types</label>
+                        <div class="form-check-container">
+                            {{$clientResponseTypes := .Client.ResponseTypes}}
+                            {{range .AvailableResponseTypes}}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="response_types" value="{{.}}" id="response_{{.}}"
+                                       {{if contains $clientResponseTypes .}}checked{{end}}>
+                                <label class="form-check-label" for="response_{{.}}">
+                                    {{.}}
+                                </label>
+                            </div>
+                            {{end}}
+                        </div>
+                        <div class="form-text">OAuth 2.0 response types this client can request</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Scopes</label>
+                <div class="form-check-container">
+                    {{$clientScopes := .Client.Scopes}}
+                    {{range .AvailableScopes}}
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="checkbox" name="scopes" value="{{.Name}}" id="scope_{{.Name}}"
+                               {{if contains $clientScopes .Name}}checked{{end}}>
+                        <label class="form-check-label" for="scope_{{.Name}}" title="{{.Description}}">
+                            {{.Name}}
+                        </label>
+                    </div>
+                    {{end}}
+                </div>
+                <div class="form-text">Scopes this client is allowed to request</div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="logo_uri" class="form-label">Logo URI</label>
+                        <input type="url" class="form-control" id="logo_uri" name="logo_uri" 
+                               value="{{if .Client.LogoURI}}{{.Client.LogoURI}}{{end}}">
+                        <div class="form-text">URI of the client logo image</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="tos_uri" class="form-label">Terms of Service URI</label>
+                        <input type="url" class="form-control" id="tos_uri" name="tos_uri" 
+                               value="{{if .Client.TosURI}}{{.Client.TosURI}}{{end}}">
+                        <div class="form-text">URI of the client's terms of service</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="policy_uri" class="form-label">Privacy Policy URI</label>
+                        <input type="url" class="form-control" id="policy_uri" name="policy_uri" 
+                               value="{{if .Client.PolicyURI}}{{.Client.PolicyURI}}{{end}}">
+                        <div class="form-text">URI of the client's privacy policy</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label for="jwks_uri" class="form-label">JWKS URI</label>
+                        <input type="url" class="form-control" id="jwks_uri" name="jwks_uri" 
+                               value="{{if .Client.JwksURI}}{{.Client.JwksURI}}{{end}}">
+                        <div class="form-text">URI of the client's JSON Web Key Set</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="contacts" class="form-label">Contact Emails</label>
+                <input type="text" class="form-control" id="contacts" name="contacts" 
+                       value="{{join .Client.ContactEmails ","}}">
+                <div class="form-text">Comma-separated list of contact email addresses</div>
+            </div>
+
+            {{if .Client.ClientID}}
+            <div class="alert alert-info">
+                <strong>Client ID:</strong> <code>{{.Client.ClientID}}</code><br>
+                {{if not .Client.IsPublic}}
+                <strong>Client Secret:</strong> <span class="text-muted">[Hidden for security]</span>
+                <button type="button" class="btn btn-sm btn-outline-primary ms-2" onclick="regenerateSecret()">
+                    Regenerate Secret
+                </button>
+                {{end}}
+                <br><strong>Created:</strong> {{.Client.CreatedAt.Format "2006-01-02 15:04:05"}}
+                {{if .Client.UpdatedAt}}
+                <br><strong>Updated:</strong> {{.Client.UpdatedAt.Format "2006-01-02 15:04:05"}}
+                {{end}}
+            </div>
+            {{end}}
+
+            <div class="d-flex justify-content-between">
+                <a href="/admin/clients" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left me-1"></i>Back to Clients
+                </a>
+                <div>
+                    {{if .Client.ClientID}}
+                    <button type="button" class="btn btn-danger me-2" onclick="deleteClient()">
+                        <i class="fas fa-trash me-1"></i>Delete Client
+                    </button>
+                    {{end}}
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-1"></i>
+                        {{if .Client.ClientID}}Update Client{{else}}Create Client{{end}}
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    function addRedirectUri() {
+        const container = document.getElementById('redirect-uris-container');
+        const div = document.createElement('div');
+        div.className = 'input-group mb-2';
+        div.innerHTML = `
+            <input type="url" class="form-control" name="redirect_uris" placeholder="https://example.com/callback" required>
+            <button type="button" class="btn btn-outline-danger" onclick="removeRedirectUri(this)">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        container.appendChild(div);
+    }
+
+    function removeRedirectUri(button) {
+        const container = document.getElementById('redirect-uris-container');
+        if (container.children.length > 1) {
+            button.closest('.input-group').remove();
+        }
+    }
+
+    function updateClientType() {
+        const appType = document.getElementById('application_type').value;
+        const isPublic = document.getElementById('is_public');
+        
+        if (appType === 'native') {
+            isPublic.value = 'true';
+        } else {
+            isPublic.value = 'false';
+        }
+    }
+
+    function regenerateSecret() {
+        if (confirm('Are you sure you want to regenerate the client secret? The old secret will no longer work.')) {
+            fetch(`/admin/api/clients/{{.Client.ClientID}}/regenerate-secret`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`New client secret: ${data.client_secret}\n\nPlease save this secret immediately, it will not be shown again.`);
+                } else {
+                    alert('Failed to regenerate secret: ' + data.error);
+                }
+            })
+            .catch(error => {
+                alert('Error regenerating secret: ' + error);
+            });
+        }
+    }
+
+    function deleteClient() {
+        if (confirm('Are you sure you want to delete this client? This action cannot be undone.')) {
+            fetch(`/admin/api/clients/{{.Client.ClientID}}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    window.location.href = '/admin/clients';
+                } else {
+                    return response.json().then(data => {
+                        throw new Error(data.error || 'Failed to delete client');
+                    });
+                }
+            })
+            .catch(error => {
+                alert('Error deleting client: ' + error.message);
+            });
+        }
+    }
+
+    // Form validation
+    document.getElementById('clientForm').addEventListener('submit', function(e) {
+        const grantTypes = document.querySelectorAll('input[name="grant_types"]:checked');
+        const responseTypes = document.querySelectorAll('input[name="response_types"]:checked');
+        
+        if (grantTypes.length === 0) {
+            e.preventDefault();
+            alert('Please select at least one grant type.');
+            return;
+        }
+        
+        if (responseTypes.length === 0) {
+            e.preventDefault();
+            alert('Please select at least one response type.');
+            return;
+        }
+    });
+</script>
+{{end}}

@@ -13,15 +13,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"oauth-server/internal/admin"
 	"oauth-server/internal/auth"
 	"oauth-server/internal/db"
+	"oauth-server/internal/dcr"
 	"oauth-server/internal/oidc"
 )
 
 type Handler struct {
-	auth *auth.Service
-	db   db.DatabaseInterface
-	oidc *oidc.Service
+	auth  *auth.Service
+	db    db.DatabaseInterface
+	oidc  *oidc.Service
+	dcr   *dcr.Service
+	admin *admin.Service
 }
 
 type ErrorResponse struct {
@@ -29,11 +33,13 @@ type ErrorResponse struct {
 	ErrorDescription string `json:"error_description,omitempty"`
 }
 
-func NewHandler(authService *auth.Service, database db.DatabaseInterface, oidcService *oidc.Service) *Handler {
+func NewHandler(authService *auth.Service, database db.DatabaseInterface, oidcService *oidc.Service, dcrService *dcr.Service, adminService *admin.Service) *Handler {
 	return &Handler{
-		auth: authService,
-		db:   database,
-		oidc: oidcService,
+		auth:  authService,
+		db:    database,
+		oidc:  oidcService,
+		dcr:   dcrService,
+		admin: adminService,
 	}
 }
 
@@ -50,10 +56,21 @@ func (h *Handler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/session/check", h.CheckSession).Methods("GET")
 	r.HandleFunc("/session/iframe", h.SessionIframe).Methods("GET")
 	
+	// Dynamic Client Registration endpoints (RFC 7591)
+	r.HandleFunc("/register", h.RegisterClient).Methods("POST")
+	r.HandleFunc("/register/{client_id}", h.GetClient).Methods("GET")
+	r.HandleFunc("/register/{client_id}", h.UpdateClient).Methods("PUT")
+	r.HandleFunc("/register/{client_id}", h.DeleteClient).Methods("DELETE")
+	
 	apiRouter := r.PathPrefix("/api").Subrouter()
 	apiRouter.HandleFunc("/clients", h.CreateClient).Methods("POST")
 	apiRouter.HandleFunc("/clients", h.ListClients).Methods("GET")
 	apiRouter.HandleFunc("/users", h.CreateUser).Methods("POST")
+	
+	// Admin interface routes
+	if h.admin != nil {
+		h.admin.RegisterRoutes(r)
+	}
 }
 
 func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +120,7 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 		scopes = strings.Split(scope, " ")
 	}
 
-	if err := h.auth.ValidateScopes(scopes, client.Scopes); err != nil {
+	if err := h.auth.ValidateScopes(r.Context(), scopes, client.Scopes); err != nil {
 		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "invalid_scope", "Invalid scope requested", state)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
@@ -1349,3 +1366,120 @@ func (h *Handler) generateIDTokenForImplicit(req *auth.AuthorizeRequest, respons
 	
 	return h.oidc.GenerateIDToken(user, req.ClientID, response.Nonce, authTime, ttl)
 }
+
+// Dynamic Client Registration handlers (RFC 7591)
+
+func (h *Handler) RegisterClient(w http.ResponseWriter, r *http.Request) {
+	var req dcr.ClientRegistrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.sendError(w, "invalid_request", "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	
+	response, err := h.dcr.RegisterClient(r.Context(), &req)
+	if err != nil {
+		switch err {
+		case dcr.ErrInvalidClientMetadata:
+			h.sendError(w, "invalid_client_metadata", err.Error(), http.StatusBadRequest)
+		case dcr.ErrInvalidRedirectURI:
+			h.sendError(w, "invalid_redirect_uri", err.Error(), http.StatusBadRequest)
+		case dcr.ErrAccessDenied:
+			h.sendError(w, "access_denied", "Client registration is disabled", http.StatusForbidden)
+		default:
+			h.sendError(w, "server_error", "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) GetClient(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := vars["client_id"]
+	
+	// Extract registration access token from Authorization header
+	registrationToken := h.extractBearerToken(r)
+	if registrationToken == "" {
+		h.sendError(w, "invalid_token", "Registration access token required", http.StatusUnauthorized)
+		return
+	}
+	
+	response, err := h.dcr.GetClient(r.Context(), clientID, registrationToken)
+	if err != nil {
+		switch err {
+		case dcr.ErrInvalidToken:
+			h.sendError(w, "invalid_token", "Invalid registration access token", http.StatusUnauthorized)
+		default:
+			h.sendError(w, "server_error", "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) UpdateClient(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := vars["client_id"]
+	
+	// Extract registration access token from Authorization header
+	registrationToken := h.extractBearerToken(r)
+	if registrationToken == "" {
+		h.sendError(w, "invalid_token", "Registration access token required", http.StatusUnauthorized)
+		return
+	}
+	
+	var req dcr.ClientRegistrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.sendError(w, "invalid_request", "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	
+	response, err := h.dcr.UpdateClient(r.Context(), clientID, registrationToken, &req)
+	if err != nil {
+		switch err {
+		case dcr.ErrInvalidToken:
+			h.sendError(w, "invalid_token", "Invalid registration access token", http.StatusUnauthorized)
+		case dcr.ErrInvalidClientMetadata:
+			h.sendError(w, "invalid_client_metadata", err.Error(), http.StatusBadRequest)
+		case dcr.ErrInvalidRedirectURI:
+			h.sendError(w, "invalid_redirect_uri", err.Error(), http.StatusBadRequest)
+		default:
+			h.sendError(w, "server_error", "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) DeleteClient(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := vars["client_id"]
+	
+	// Extract registration access token from Authorization header
+	registrationToken := h.extractBearerToken(r)
+	if registrationToken == "" {
+		h.sendError(w, "invalid_token", "Registration access token required", http.StatusUnauthorized)
+		return
+	}
+	
+	err := h.dcr.DeleteClient(r.Context(), clientID, registrationToken)
+	if err != nil {
+		switch err {
+		case dcr.ErrInvalidToken:
+			h.sendError(w, "invalid_token", "Invalid registration access token", http.StatusUnauthorized)
+		default:
+			h.sendError(w, "server_error", "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+	
+	w.WriteHeader(http.StatusNoContent)
+}
+
