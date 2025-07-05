@@ -42,18 +42,14 @@ A production-ready OAuth 2.0 authorization server implementation built from scra
 └── web/                # Static files and templates
 ```
 
-## Quick Start
-
-> **📦 Task-based Build System**  
-> This project uses [Taskfile](https://taskfile.dev/) for build automation, providing better cross-platform support and enhanced developer experience. See [TASKFILE_MIGRATION.md](TASKFILE_MIGRATION.md) for details.
-
-### Prerequisites
+## Prerequisites
 
 - Go 1.24+
 - PostgreSQL 12+
 - Git
+- Task (for build automation)
 
-### Installation
+## Installation
 
 1. **Clone the repository**:
    ```bash
