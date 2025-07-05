@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -137,24 +138,24 @@ func (d *Database) createTables() error {
 	return nil
 }
 
-func (d *Database) CreateUser(user *User) error {
+func (d *Database) CreateUser(ctx context.Context, user *User) error {
 	query := `INSERT INTO users (username, email, password, scopes) 
 			  VALUES ($1, $2, $3, $4) 
 			  RETURNING id, created_at, updated_at`
 	
-	err := d.db.QueryRow(query, user.Username, user.Email, user.Password, 
+	err := d.db.QueryRowContext(ctx, query, user.Username, user.Email, user.Password, 
 		pq.Array(user.Scopes)).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 	
 	return err
 }
 
-func (d *Database) GetUserByUsername(username string) (*User, error) {
+func (d *Database) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	user := &User{}
 	query := `SELECT id, username, email, password, scopes, created_at, updated_at 
 			  FROM users WHERE username = $1`
 	
 	var scopes pq.StringArray
-	err := d.db.QueryRow(query, username).Scan(
+	err := d.db.QueryRowContext(ctx, query, username).Scan(
 		&user.ID, &user.Username, &user.Email, &user.Password, 
 		&scopes, &user.CreatedAt, &user.UpdatedAt)
 	
@@ -166,13 +167,13 @@ func (d *Database) GetUserByUsername(username string) (*User, error) {
 	return user, nil
 }
 
-func (d *Database) GetUserByID(id uuid.UUID) (*User, error) {
+func (d *Database) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	user := &User{}
 	query := `SELECT id, username, email, password, scopes, created_at, updated_at 
 			  FROM users WHERE id = $1`
 	
 	var scopes pq.StringArray
-	err := d.db.QueryRow(query, id).Scan(
+	err := d.db.QueryRowContext(ctx, query, id).Scan(
 		&user.ID, &user.Username, &user.Email, &user.Password, 
 		&scopes, &user.CreatedAt, &user.UpdatedAt)
 	
@@ -184,12 +185,12 @@ func (d *Database) GetUserByID(id uuid.UUID) (*User, error) {
 	return user, nil
 }
 
-func (d *Database) CreateClient(client *Client) error {
+func (d *Database) CreateClient(ctx context.Context, client *Client) error {
 	query := `INSERT INTO clients (client_id, client_secret, name, redirect_uris, scopes, grant_types, is_public) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7) 
 			  RETURNING id, created_at, updated_at`
 	
-	err := d.db.QueryRow(query, client.ClientID, client.ClientSecret, client.Name,
+	err := d.db.QueryRowContext(ctx, query, client.ClientID, client.ClientSecret, client.Name,
 		pq.Array(client.RedirectURIs), pq.Array(client.Scopes), 
 		pq.Array(client.GrantTypes), client.IsPublic).Scan(
 		&client.ID, &client.CreatedAt, &client.UpdatedAt)
@@ -197,13 +198,13 @@ func (d *Database) CreateClient(client *Client) error {
 	return err
 }
 
-func (d *Database) GetClientByID(clientID string) (*Client, error) {
+func (d *Database) GetClientByID(ctx context.Context, clientID string) (*Client, error) {
 	client := &Client{}
 	query := `SELECT id, client_id, client_secret, name, redirect_uris, scopes, grant_types, is_public, created_at, updated_at 
 			  FROM clients WHERE client_id = $1`
 	
 	var redirectURIs, scopes, grantTypes pq.StringArray
-	err := d.db.QueryRow(query, clientID).Scan(
+	err := d.db.QueryRowContext(ctx, query, clientID).Scan(
 		&client.ID, &client.ClientID, &client.ClientSecret, &client.Name,
 		&redirectURIs, &scopes, &grantTypes, &client.IsPublic,
 		&client.CreatedAt, &client.UpdatedAt)
@@ -218,11 +219,11 @@ func (d *Database) GetClientByID(clientID string) (*Client, error) {
 	return client, nil
 }
 
-func (d *Database) GetAllClients() ([]*Client, error) {
+func (d *Database) GetAllClients(ctx context.Context) ([]*Client, error) {
 	query := `SELECT id, client_id, client_secret, name, redirect_uris, scopes, grant_types, is_public, created_at, updated_at 
 			  FROM clients ORDER BY created_at DESC`
 	
-	rows, err := d.db.Query(query)
+	rows, err := d.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -251,12 +252,12 @@ func (d *Database) GetAllClients() ([]*Client, error) {
 	return clients, nil
 }
 
-func (d *Database) CreateAuthorizationCode(code *AuthorizationCode) error {
+func (d *Database) CreateAuthorizationCode(ctx context.Context, code *AuthorizationCode) error {
 	query := `INSERT INTO authorization_codes (code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
 			  RETURNING id, created_at`
 	
-	err := d.db.QueryRow(query, code.Code, code.ClientID, code.UserID,
+	err := d.db.QueryRowContext(ctx, query, code.Code, code.ClientID, code.UserID,
 		code.RedirectURI, pq.Array(code.Scopes), code.CodeChallenge, 
 		code.CodeChallengeMethod, code.ExpiresAt).Scan(
 		&code.ID, &code.CreatedAt)
@@ -264,13 +265,13 @@ func (d *Database) CreateAuthorizationCode(code *AuthorizationCode) error {
 	return err
 }
 
-func (d *Database) GetAuthorizationCode(code string) (*AuthorizationCode, error) {
+func (d *Database) GetAuthorizationCode(ctx context.Context, code string) (*AuthorizationCode, error) {
 	authCode := &AuthorizationCode{}
 	query := `SELECT id, code, client_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at, used, created_at 
 			  FROM authorization_codes WHERE code = $1 AND NOT used AND expires_at > NOW()`
 	
 	var scopes pq.StringArray
-	err := d.db.QueryRow(query, code).Scan(
+	err := d.db.QueryRowContext(ctx, query, code).Scan(
 		&authCode.ID, &authCode.Code, &authCode.ClientID, &authCode.UserID,
 		&authCode.RedirectURI, &scopes, &authCode.CodeChallenge, 
 		&authCode.CodeChallengeMethod, &authCode.ExpiresAt, &authCode.Used,
@@ -284,43 +285,43 @@ func (d *Database) GetAuthorizationCode(code string) (*AuthorizationCode, error)
 	return authCode, nil
 }
 
-func (d *Database) MarkAuthorizationCodeUsed(code string) error {
+func (d *Database) MarkAuthorizationCodeUsed(ctx context.Context, code string) error {
 	query := `UPDATE authorization_codes SET used = TRUE WHERE code = $1`
-	_, err := d.db.Exec(query, code)
+	_, err := d.db.ExecContext(ctx, query, code)
 	return err
 }
 
-func (d *Database) CreateAccessToken(token *AccessToken) error {
+func (d *Database) CreateAccessToken(ctx context.Context, token *AccessToken) error {
 	query := `INSERT INTO access_tokens (token, client_id, user_id, scopes, expires_at) 
 			  VALUES ($1, $2, $3, $4, $5) 
 			  RETURNING id, created_at`
 	
-	err := d.db.QueryRow(query, token.Token, token.ClientID, token.UserID,
+	err := d.db.QueryRowContext(ctx, query, token.Token, token.ClientID, token.UserID,
 		pq.Array(token.Scopes), token.ExpiresAt).Scan(
 		&token.ID, &token.CreatedAt)
 	
 	return err
 }
 
-func (d *Database) CreateRefreshToken(token *RefreshToken) error {
+func (d *Database) CreateRefreshToken(ctx context.Context, token *RefreshToken) error {
 	query := `INSERT INTO refresh_tokens (token, access_token_id, client_id, user_id, scopes, expires_at) 
 			  VALUES ($1, $2, $3, $4, $5, $6) 
 			  RETURNING id, created_at`
 	
-	err := d.db.QueryRow(query, token.Token, token.AccessTokenID, token.ClientID,
+	err := d.db.QueryRowContext(ctx, query, token.Token, token.AccessTokenID, token.ClientID,
 		token.UserID, pq.Array(token.Scopes), token.ExpiresAt).Scan(
 		&token.ID, &token.CreatedAt)
 	
 	return err
 }
 
-func (d *Database) GetAccessToken(token string) (*AccessToken, error) {
+func (d *Database) GetAccessToken(ctx context.Context, token string) (*AccessToken, error) {
 	accessToken := &AccessToken{}
 	query := `SELECT id, token, client_id, user_id, scopes, expires_at, revoked, created_at 
 			  FROM access_tokens WHERE token = $1 AND NOT revoked AND expires_at > NOW()`
 	
 	var scopes pq.StringArray
-	err := d.db.QueryRow(query, token).Scan(
+	err := d.db.QueryRowContext(ctx, query, token).Scan(
 		&accessToken.ID, &accessToken.Token, &accessToken.ClientID, &accessToken.UserID,
 		&scopes, &accessToken.ExpiresAt, &accessToken.Revoked, &accessToken.CreatedAt)
 	
@@ -332,13 +333,13 @@ func (d *Database) GetAccessToken(token string) (*AccessToken, error) {
 	return accessToken, nil
 }
 
-func (d *Database) GetRefreshToken(token string) (*RefreshToken, error) {
+func (d *Database) GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error) {
 	refreshToken := &RefreshToken{}
 	query := `SELECT id, token, access_token_id, client_id, user_id, scopes, expires_at, revoked, created_at 
 			  FROM refresh_tokens WHERE token = $1 AND NOT revoked AND expires_at > NOW()`
 	
 	var scopes pq.StringArray
-	err := d.db.QueryRow(query, token).Scan(
+	err := d.db.QueryRowContext(ctx, query, token).Scan(
 		&refreshToken.ID, &refreshToken.Token, &refreshToken.AccessTokenID,
 		&refreshToken.ClientID, &refreshToken.UserID, &scopes, &refreshToken.ExpiresAt,
 		&refreshToken.Revoked, &refreshToken.CreatedAt)
@@ -351,24 +352,24 @@ func (d *Database) GetRefreshToken(token string) (*RefreshToken, error) {
 	return refreshToken, nil
 }
 
-func (d *Database) RevokeAccessToken(tokenID uuid.UUID) error {
+func (d *Database) RevokeAccessToken(ctx context.Context, tokenID uuid.UUID) error {
 	query := `UPDATE access_tokens SET revoked = TRUE WHERE id = $1`
-	_, err := d.db.Exec(query, tokenID)
+	_, err := d.db.ExecContext(ctx, query, tokenID)
 	return err
 }
 
-func (d *Database) RevokeRefreshToken(token string) error {
+func (d *Database) RevokeRefreshToken(ctx context.Context, token string) error {
 	query := `UPDATE refresh_tokens SET revoked = TRUE WHERE token = $1`
-	_, err := d.db.Exec(query, token)
+	_, err := d.db.ExecContext(ctx, query, token)
 	return err
 }
 
-func (d *Database) CreateDeviceCode(deviceCode *DeviceCode) error {
+func (d *Database) CreateDeviceCode(ctx context.Context, deviceCode *DeviceCode) error {
 	query := `INSERT INTO device_codes (device_code, user_code, verification_uri, verification_uri_complete, client_id, scopes, expires_at, interval_seconds) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
 			  RETURNING id, created_at`
 	
-	err := d.db.QueryRow(query, deviceCode.DeviceCode, deviceCode.UserCode, deviceCode.VerificationURI,
+	err := d.db.QueryRowContext(ctx, query, deviceCode.DeviceCode, deviceCode.UserCode, deviceCode.VerificationURI,
 		deviceCode.VerificationURIComplete, deviceCode.ClientID, pq.Array(deviceCode.Scopes), 
 		deviceCode.ExpiresAt, deviceCode.Interval).Scan(
 		&deviceCode.ID, &deviceCode.CreatedAt)
@@ -376,14 +377,14 @@ func (d *Database) CreateDeviceCode(deviceCode *DeviceCode) error {
 	return err
 }
 
-func (d *Database) GetDeviceCode(deviceCode string) (*DeviceCode, error) {
+func (d *Database) GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCode, error) {
 	device := &DeviceCode{}
 	query := `SELECT id, device_code, user_code, verification_uri, verification_uri_complete, client_id, scopes, expires_at, interval_seconds, user_id, authorized, access_token_id, created_at 
 			  FROM device_codes WHERE device_code = $1 AND expires_at > NOW()`
 	
 	var scopes pq.StringArray
 	var userID, accessTokenID *uuid.UUID
-	err := d.db.QueryRow(query, deviceCode).Scan(
+	err := d.db.QueryRowContext(ctx, query, deviceCode).Scan(
 		&device.ID, &device.DeviceCode, &device.UserCode, &device.VerificationURI,
 		&device.VerificationURIComplete, &device.ClientID, &scopes, &device.ExpiresAt,
 		&device.Interval, &userID, &device.Authorized, &accessTokenID, &device.CreatedAt)
@@ -398,14 +399,14 @@ func (d *Database) GetDeviceCode(deviceCode string) (*DeviceCode, error) {
 	return device, nil
 }
 
-func (d *Database) GetDeviceCodeByUserCode(userCode string) (*DeviceCode, error) {
+func (d *Database) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error) {
 	device := &DeviceCode{}
 	query := `SELECT id, device_code, user_code, verification_uri, verification_uri_complete, client_id, scopes, expires_at, interval_seconds, user_id, authorized, access_token_id, created_at 
 			  FROM device_codes WHERE user_code = $1 AND expires_at > NOW()`
 	
 	var scopes pq.StringArray
 	var userID, accessTokenID *uuid.UUID
-	err := d.db.QueryRow(query, userCode).Scan(
+	err := d.db.QueryRowContext(ctx, query, userCode).Scan(
 		&device.ID, &device.DeviceCode, &device.UserCode, &device.VerificationURI,
 		&device.VerificationURIComplete, &device.ClientID, &scopes, &device.ExpiresAt,
 		&device.Interval, &userID, &device.Authorized, &accessTokenID, &device.CreatedAt)
@@ -420,8 +421,60 @@ func (d *Database) GetDeviceCodeByUserCode(userCode string) (*DeviceCode, error)
 	return device, nil
 }
 
-func (d *Database) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
+func (d *Database) AuthorizeDeviceCode(ctx context.Context, userCode string, userID uuid.UUID) error {
 	query := `UPDATE device_codes SET user_id = $1, authorized = TRUE WHERE user_code = $2 AND expires_at > NOW()`
-	_, err := d.db.Exec(query, userID, userCode)
+	_, err := d.db.ExecContext(ctx, query, userID, userCode)
 	return err
+}
+
+// CleanupExpiredTokens removes expired access and refresh tokens
+func (d *Database) CleanupExpiredTokens(ctx context.Context) error {
+	queries := []string{
+		`DELETE FROM access_tokens WHERE expires_at < NOW()`,
+		`DELETE FROM refresh_tokens WHERE expires_at < NOW()`,
+	}
+	
+	for _, query := range queries {
+		_, err := d.db.ExecContext(ctx, query)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CleanupExpiredCodes removes expired authorization and device codes
+func (d *Database) CleanupExpiredCodes(ctx context.Context) error {
+	queries := []string{
+		`DELETE FROM authorization_codes WHERE expires_at < NOW()`,
+		`DELETE FROM device_codes WHERE expires_at < NOW()`,
+	}
+	
+	for _, query := range queries {
+		_, err := d.db.ExecContext(ctx, query)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetDatabaseStats returns database connection statistics
+func (d *Database) GetDatabaseStats(ctx context.Context) (*DatabaseStats, error) {
+	stats := d.db.Stats()
+	return &DatabaseStats{
+		OpenConnections:     stats.OpenConnections,
+		InUse:              stats.InUse,
+		Idle:               stats.Idle,
+		WaitCount:          stats.WaitCount,
+		WaitDuration:       int64(stats.WaitDuration),
+		MaxIdleClosed:      stats.MaxIdleClosed,
+		MaxIdleTimeClosed:  stats.MaxIdleTimeClosed,
+		MaxLifetimeClosed:  stats.MaxLifetimeClosed,
+	}, nil
+}
+
+// Ping verifies the database connection
+func (d *Database) Ping(ctx context.Context) error {
+	return d.db.PingContext(ctx)
 }

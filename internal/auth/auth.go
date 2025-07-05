@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -51,6 +52,7 @@ type AuthorizeRequest struct {
 	State               string `json:"state"`
 	CodeChallenge       string `json:"code_challenge"`
 	CodeChallengeMethod string `json:"code_challenge_method"`
+	Nonce               string `json:"nonce,omitempty"`
 }
 
 type TokenRequest struct {
@@ -91,6 +93,17 @@ type DeviceAuthorizationResponse struct {
 	Interval                int    `json:"interval"`
 }
 
+type ImplicitGrantResponse struct {
+	AccessToken     string `json:"access_token"`
+	TokenType       string `json:"token_type"`
+	ExpiresIn       int64  `json:"expires_in"`
+	Scope           string `json:"scope,omitempty"`
+	State           string `json:"state,omitempty"`
+	IDToken         string `json:"id_token,omitempty"`
+	GenerateIDToken bool   `json:"-"` // Internal flag
+	Nonce           string `json:"-"` // Internal field
+}
+
 func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *config.Config) *Service {
 	return &Service{
 		db:     database,
@@ -100,8 +113,8 @@ func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *
 	}
 }
 
-func (s *Service) AuthenticateUser(username, password string) (*db.User, error) {
-	user, err := s.db.GetUserByUsername(username)
+func (s *Service) AuthenticateUser(ctx context.Context, username, password string) (*db.User, error) {
+	user, err := s.db.GetUserByUsername(ctx, username)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -113,8 +126,8 @@ func (s *Service) AuthenticateUser(username, password string) (*db.User, error) 
 	return user, nil
 }
 
-func (s *Service) ValidateClient(clientID, clientSecret string) (*db.Client, error) {
-	client, err := s.db.GetClientByID(clientID)
+func (s *Service) ValidateClient(ctx context.Context, clientID, clientSecret string) (*db.Client, error) {
+	client, err := s.db.GetClientByID(ctx, clientID)
 	if err != nil {
 		return nil, ErrInvalidClient
 	}
@@ -157,7 +170,7 @@ func (s *Service) ValidateScopes(requestedScopes []string, allowedScopes []strin
 	return nil
 }
 
-func (s *Service) CreateAuthorizationCode(userID uuid.UUID, clientID, redirectURI string, scopes []string, codeChallenge, codeChallengeMethod string) (string, error) {
+func (s *Service) CreateAuthorizationCode(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, codeChallenge, codeChallengeMethod string) (string, error) {
 	code, err := s.jwt.GenerateAuthorizationCode()
 	if err != nil {
 		return "", err
@@ -183,15 +196,15 @@ func (s *Service) CreateAuthorizationCode(userID uuid.UUID, clientID, redirectUR
 		ExpiresAt:           time.Now().Add(s.config.Auth.AuthorizationCodeTTL),
 	}
 
-	if err := s.db.CreateAuthorizationCode(authCode); err != nil {
+	if err := s.db.CreateAuthorizationCode(ctx, authCode); err != nil {
 		return "", err
 	}
 
 	return code, nil
 }
 
-func (s *Service) ExchangeCodeForToken(req *TokenRequest) (*TokenResponse, error) {
-	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+func (s *Service) ExchangeCodeForToken(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +213,7 @@ func (s *Service) ExchangeCodeForToken(req *TokenRequest) (*TokenResponse, error
 		return nil, ErrInvalidGrant
 	}
 
-	authCode, err := s.db.GetAuthorizationCode(req.Code)
+	authCode, err := s.db.GetAuthorizationCode(ctx, req.Code)
 	if err != nil {
 		return nil, ErrExpiredCode
 	}
@@ -229,15 +242,15 @@ func (s *Service) ExchangeCodeForToken(req *TokenRequest) (*TokenResponse, error
 		return nil, ErrInvalidCodeChallenge
 	}
 
-	if err := s.db.MarkAuthorizationCodeUsed(req.Code); err != nil {
+	if err := s.db.MarkAuthorizationCodeUsed(ctx, req.Code); err != nil {
 		return nil, err
 	}
 
-	return s.createTokenPair(authCode.UserID, authCode.ClientID, authCode.Scopes)
+	return s.createTokenPair(ctx, authCode.UserID, authCode.ClientID, authCode.Scopes)
 }
 
-func (s *Service) RefreshAccessToken(req *TokenRequest) (*TokenResponse, error) {
-	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+func (s *Service) RefreshAccessToken(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +259,7 @@ func (s *Service) RefreshAccessToken(req *TokenRequest) (*TokenResponse, error) 
 		return nil, ErrInvalidGrant
 	}
 
-	refreshToken, err := s.db.GetRefreshToken(req.RefreshToken)
+	refreshToken, err := s.db.GetRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
 	}
@@ -255,11 +268,11 @@ func (s *Service) RefreshAccessToken(req *TokenRequest) (*TokenResponse, error) 
 		return nil, ErrInvalidClient
 	}
 
-	if err := s.db.RevokeAccessToken(refreshToken.AccessTokenID); err != nil {
+	if err := s.db.RevokeAccessToken(ctx, refreshToken.AccessTokenID); err != nil {
 		return nil, err
 	}
 
-	if err := s.db.RevokeRefreshToken(req.RefreshToken); err != nil {
+	if err := s.db.RevokeRefreshToken(ctx, req.RefreshToken); err != nil {
 		return nil, err
 	}
 
@@ -272,11 +285,11 @@ func (s *Service) RefreshAccessToken(req *TokenRequest) (*TokenResponse, error) 
 		scopes = requestedScopes
 	}
 
-	return s.createTokenPair(refreshToken.UserID, refreshToken.ClientID, scopes)
+	return s.createTokenPair(ctx, refreshToken.UserID, refreshToken.ClientID, scopes)
 }
 
-func (s *Service) ClientCredentialsGrant(req *TokenRequest) (*TokenResponse, error) {
-	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+func (s *Service) ClientCredentialsGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -294,11 +307,11 @@ func (s *Service) ClientCredentialsGrant(req *TokenRequest) (*TokenResponse, err
 		scopes = requestedScopes
 	}
 
-	return s.createTokenPair(uuid.Nil, req.ClientID, scopes)
+	return s.createTokenPair(ctx, uuid.Nil, req.ClientID, scopes)
 }
 
-func (s *Service) ResourceOwnerPasswordCredentialsGrant(req *TokenRequest) (*TokenResponse, error) {
-	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+func (s *Service) ResourceOwnerPasswordCredentialsGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +324,7 @@ func (s *Service) ResourceOwnerPasswordCredentialsGrant(req *TokenRequest) (*Tok
 		return nil, errors.New("username and password required")
 	}
 
-	user, err := s.AuthenticateUser(req.Username, req.Password)
+	user, err := s.AuthenticateUser(ctx, req.Username, req.Password)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -325,11 +338,11 @@ func (s *Service) ResourceOwnerPasswordCredentialsGrant(req *TokenRequest) (*Tok
 		scopes = requestedScopes
 	}
 
-	return s.createTokenPair(user.ID, req.ClientID, scopes)
+	return s.createTokenPair(ctx, user.ID, req.ClientID, scopes)
 }
 
-func (s *Service) InitiateDeviceAuthorization(req *DeviceAuthorizationRequest, baseURL string) (*DeviceAuthorizationResponse, error) {
-	client, err := s.db.GetClientByID(req.ClientID)
+func (s *Service) InitiateDeviceAuthorization(ctx context.Context, req *DeviceAuthorizationRequest, baseURL string) (*DeviceAuthorizationResponse, error) {
+	client, err := s.db.GetClientByID(ctx, req.ClientID)
 	if err != nil {
 		return nil, ErrInvalidClient
 	}
@@ -372,7 +385,7 @@ func (s *Service) InitiateDeviceAuthorization(req *DeviceAuthorizationRequest, b
 		Interval:                interval,
 	}
 
-	if err := s.db.CreateDeviceCode(deviceCodeRecord); err != nil {
+	if err := s.db.CreateDeviceCode(ctx, deviceCodeRecord); err != nil {
 		return nil, err
 	}
 
@@ -386,8 +399,8 @@ func (s *Service) InitiateDeviceAuthorization(req *DeviceAuthorizationRequest, b
 	}, nil
 }
 
-func (s *Service) DeviceCodeGrant(req *TokenRequest) (*TokenResponse, error) {
-	client, err := s.ValidateClient(req.ClientID, req.ClientSecret)
+func (s *Service) DeviceCodeGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
+	client, err := s.ValidateClient(ctx, req.ClientID, req.ClientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +409,7 @@ func (s *Service) DeviceCodeGrant(req *TokenRequest) (*TokenResponse, error) {
 		return nil, ErrInvalidGrant
 	}
 
-	deviceCode, err := s.db.GetDeviceCode(req.DeviceCode)
+	deviceCode, err := s.db.GetDeviceCode(ctx, req.DeviceCode)
 	if err != nil {
 		return nil, ErrExpiredToken
 	}
@@ -413,10 +426,10 @@ func (s *Service) DeviceCodeGrant(req *TokenRequest) (*TokenResponse, error) {
 		return nil, ErrAccessDenied
 	}
 
-	return s.createTokenPair(*deviceCode.UserID, req.ClientID, deviceCode.Scopes)
+	return s.createTokenPair(ctx, *deviceCode.UserID, req.ClientID, deviceCode.Scopes)
 }
 
-func (s *Service) JWTBearerGrant(req *TokenRequest) (*TokenResponse, error) {
+func (s *Service) JWTBearerGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
 	if req.Assertion == "" {
 		return nil, errors.New("assertion required")
 	}
@@ -474,7 +487,7 @@ func (s *Service) JWTBearerGrant(req *TokenRequest) (*TokenResponse, error) {
 	}
 
 	// Verify the client
-	client, err := s.db.GetClientByID(issuer)
+	client, err := s.db.GetClientByID(ctx, issuer)
 	if err != nil {
 		return nil, ErrInvalidClient
 	}
@@ -503,12 +516,116 @@ func (s *Service) JWTBearerGrant(req *TokenRequest) (*TokenResponse, error) {
 	userID := uuid.Nil
 	if subjectUUID, err := uuid.Parse(subject); err == nil {
 		// Subject is a user ID
-		if _, err := s.db.GetUserByID(subjectUUID); err == nil {
+		if _, err := s.db.GetUserByID(ctx, subjectUUID); err == nil {
 			userID = subjectUUID
 		}
 	}
 
-	return s.createTokenPair(userID, issuer, scopes)
+	return s.createTokenPair(ctx, userID, issuer, scopes)
+}
+
+// ImplicitGrant handles the OAuth 2.0 Implicit Grant flow
+// Note: This is deprecated but provided for backward compatibility
+func (s *Service) ImplicitGrant(ctx context.Context, req *AuthorizeRequest, userID uuid.UUID) (*ImplicitGrantResponse, error) {
+	// Validate client
+	client, err := s.db.GetClientByID(ctx, req.ClientID)
+	if err != nil {
+		return nil, ErrInvalidClient
+	}
+	
+	// Check if client supports implicit grant
+	if !s.hasGrantType(client, "implicit") {
+		return nil, ErrInvalidGrant
+	}
+	
+	// Validate redirect URI
+	if err := s.ValidateRedirectURI(client, req.RedirectURI); err != nil {
+		return nil, err
+	}
+	
+	// Parse and validate scopes
+	var scopes []string
+	if req.Scope != "" {
+		scopes = strings.Split(req.Scope, " ")
+		if err := s.ValidateScopes(scopes, client.Scopes); err != nil {
+			return nil, err
+		}
+	} else {
+		scopes = client.Scopes
+	}
+	
+	// Generate access token directly (no authorization code)
+	tokenID := uuid.New()
+	accessToken, err := s.jwt.GenerateAccessToken(userID, req.ClientID, scopes, tokenID, s.config.Auth.AccessTokenTTL)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Store access token in database
+	dbAccessToken := &db.AccessToken{
+		Token:     accessToken,
+		ClientID:  req.ClientID,
+		UserID:    userID,
+		Scopes:    scopes,
+		ExpiresAt: time.Now().Add(s.config.Auth.AccessTokenTTL),
+	}
+	
+	if err := s.db.CreateAccessToken(ctx, dbAccessToken); err != nil {
+		return nil, err
+	}
+	
+	response := &ImplicitGrantResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   int64(s.config.Auth.AccessTokenTTL.Seconds()),
+		Scope:       strings.Join(scopes, " "),
+		State:       req.State,
+	}
+	
+	// Generate ID token if OpenID Connect scope is requested
+	if s.hasOpenIDScope(scopes) && req.Nonce != "" {
+		// You would integrate with OIDC service here for ID token generation
+		// For now, we'll indicate that ID token should be generated
+		response.GenerateIDToken = true
+		response.Nonce = req.Nonce
+	}
+	
+	return response, nil
+}
+
+func (s *Service) hasOpenIDScope(scopes []string) bool {
+	for _, scope := range scopes {
+		if scope == "openid" {
+			return true
+		}
+	}
+	return false
+}
+
+// CreateImplicitRedirectURL creates the redirect URL for implicit grant response
+func (s *Service) CreateImplicitRedirectURL(redirectURI string, response *ImplicitGrantResponse) string {
+	u, _ := url.Parse(redirectURI)
+	
+	// Use fragment for implicit grant (not query parameters)
+	fragment := fmt.Sprintf("access_token=%s&token_type=%s&expires_in=%d",
+		url.QueryEscape(response.AccessToken),
+		url.QueryEscape(response.TokenType),
+		response.ExpiresIn)
+	
+	if response.IDToken != "" {
+		fragment += "&id_token=" + url.QueryEscape(response.IDToken)
+	}
+	
+	if response.Scope != "" {
+		fragment += "&scope=" + url.QueryEscape(response.Scope)
+	}
+	
+	if response.State != "" {
+		fragment += "&state=" + url.QueryEscape(response.State)
+	}
+	
+	u.Fragment = fragment
+	return u.String()
 }
 
 func (s *Service) getAudienceFromClaim(aud interface{}) ([]string, error) {
@@ -580,13 +697,13 @@ func (s *Service) verifyJWTAssertion(token *jwt.Token, client *db.Client) error 
 	return nil
 }
 
-func (s *Service) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
-	_, err := s.db.GetDeviceCodeByUserCode(userCode)
+func (s *Service) AuthorizeDeviceCode(ctx context.Context, userCode string, userID uuid.UUID) error {
+	_, err := s.db.GetDeviceCodeByUserCode(ctx, userCode)
 	if err != nil {
 		return errors.New("invalid user code")
 	}
 
-	return s.db.AuthorizeDeviceCode(userCode, userID)
+	return s.db.AuthorizeDeviceCode(ctx, userCode, userID)
 }
 
 func (s *Service) generateDeviceCode() (string, error) {
@@ -618,7 +735,7 @@ func (s *Service) generateUserCode() (string, error) {
 	return string(result), nil
 }
 
-func (s *Service) createTokenPair(userID uuid.UUID, clientID string, scopes []string) (*TokenResponse, error) {
+func (s *Service) createTokenPair(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (*TokenResponse, error) {
 	tokenID := uuid.New()
 	
 	accessToken, err := s.jwt.GenerateAccessToken(userID, clientID, scopes, tokenID, s.config.Auth.AccessTokenTTL)
@@ -639,7 +756,7 @@ func (s *Service) createTokenPair(userID uuid.UUID, clientID string, scopes []st
 		ExpiresAt: time.Now().Add(s.config.Auth.AccessTokenTTL),
 	}
 
-	if err := s.db.CreateAccessToken(dbAccessToken); err != nil {
+	if err := s.db.CreateAccessToken(ctx, dbAccessToken); err != nil {
 		return nil, err
 	}
 
@@ -652,7 +769,7 @@ func (s *Service) createTokenPair(userID uuid.UUID, clientID string, scopes []st
 		ExpiresAt:       time.Now().Add(s.config.Auth.RefreshTokenTTL),
 	}
 
-	if err := s.db.CreateRefreshToken(dbRefreshToken); err != nil {
+	if err := s.db.CreateRefreshToken(ctx, dbRefreshToken); err != nil {
 		return nil, err
 	}
 

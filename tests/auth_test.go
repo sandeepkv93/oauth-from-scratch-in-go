@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func NewMockDatabase() *MockDB {
 	}
 }
 
-func (m *MockDB) CreateUser(user *db.User) error {
+func (m *MockDB) CreateUser(ctx context.Context, user *db.User) error {
 	user.ID = uuid.New()
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
@@ -43,14 +44,14 @@ func (m *MockDB) CreateUser(user *db.User) error {
 	return nil
 }
 
-func (m *MockDB) GetUserByUsername(username string) (*db.User, error) {
+func (m *MockDB) GetUserByUsername(ctx context.Context, username string) (*db.User, error) {
 	if user, exists := m.users[username]; exists {
 		return user, nil
 	}
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *MockDB) GetUserByID(id uuid.UUID) (*db.User, error) {
+func (m *MockDB) GetUserByID(ctx context.Context, id uuid.UUID) (*db.User, error) {
 	for _, user := range m.users {
 		if user.ID == id {
 			return user, nil
@@ -59,7 +60,7 @@ func (m *MockDB) GetUserByID(id uuid.UUID) (*db.User, error) {
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *MockDB) CreateClient(client *db.Client) error {
+func (m *MockDB) CreateClient(ctx context.Context, client *db.Client) error {
 	client.ID = uuid.New()
 	client.CreatedAt = time.Now()
 	client.UpdatedAt = time.Now()
@@ -67,14 +68,14 @@ func (m *MockDB) CreateClient(client *db.Client) error {
 	return nil
 }
 
-func (m *MockDB) GetClientByID(clientID string) (*db.Client, error) {
+func (m *MockDB) GetClientByID(ctx context.Context, clientID string) (*db.Client, error) {
 	if client, exists := m.clients[clientID]; exists {
 		return client, nil
 	}
 	return nil, auth.ErrInvalidClient
 }
 
-func (m *MockDB) GetAllClients() ([]*db.Client, error) {
+func (m *MockDB) GetAllClients(ctx context.Context) ([]*db.Client, error) {
 	clients := make([]*db.Client, 0, len(m.clients))
 	for _, client := range m.clients {
 		clients = append(clients, client)
@@ -82,21 +83,21 @@ func (m *MockDB) GetAllClients() ([]*db.Client, error) {
 	return clients, nil
 }
 
-func (m *MockDB) CreateAuthorizationCode(code *db.AuthorizationCode) error {
+func (m *MockDB) CreateAuthorizationCode(ctx context.Context, code *db.AuthorizationCode) error {
 	code.ID = uuid.New()
 	code.CreatedAt = time.Now()
 	m.codes[code.Code] = code
 	return nil
 }
 
-func (m *MockDB) GetAuthorizationCode(code string) (*db.AuthorizationCode, error) {
+func (m *MockDB) GetAuthorizationCode(ctx context.Context, code string) (*db.AuthorizationCode, error) {
 	if authCode, exists := m.codes[code]; exists && !authCode.Used && authCode.ExpiresAt.After(time.Now()) {
 		return authCode, nil
 	}
 	return nil, auth.ErrExpiredCode
 }
 
-func (m *MockDB) MarkAuthorizationCodeUsed(code string) error {
+func (m *MockDB) MarkAuthorizationCodeUsed(ctx context.Context, code string) error {
 	if authCode, exists := m.codes[code]; exists {
 		authCode.Used = true
 		return nil
@@ -104,35 +105,35 @@ func (m *MockDB) MarkAuthorizationCodeUsed(code string) error {
 	return auth.ErrExpiredCode
 }
 
-func (m *MockDB) CreateAccessToken(token *db.AccessToken) error {
+func (m *MockDB) CreateAccessToken(ctx context.Context, token *db.AccessToken) error {
 	token.ID = uuid.New()
 	token.CreatedAt = time.Now()
 	m.accessTokens[token.Token] = token
 	return nil
 }
 
-func (m *MockDB) CreateRefreshToken(token *db.RefreshToken) error {
+func (m *MockDB) CreateRefreshToken(ctx context.Context, token *db.RefreshToken) error {
 	token.ID = uuid.New()
 	token.CreatedAt = time.Now()
 	m.refreshTokens[token.Token] = token
 	return nil
 }
 
-func (m *MockDB) GetAccessToken(token string) (*db.AccessToken, error) {
+func (m *MockDB) GetAccessToken(ctx context.Context, token string) (*db.AccessToken, error) {
 	if accessToken, exists := m.accessTokens[token]; exists && !accessToken.Revoked && accessToken.ExpiresAt.After(time.Now()) {
 		return accessToken, nil
 	}
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *MockDB) GetRefreshToken(token string) (*db.RefreshToken, error) {
+func (m *MockDB) GetRefreshToken(ctx context.Context, token string) (*db.RefreshToken, error) {
 	if refreshToken, exists := m.refreshTokens[token]; exists && !refreshToken.Revoked && refreshToken.ExpiresAt.After(time.Now()) {
 		return refreshToken, nil
 	}
 	return nil, auth.ErrInvalidCredentials
 }
 
-func (m *MockDB) RevokeAccessToken(tokenID uuid.UUID) error {
+func (m *MockDB) RevokeAccessToken(ctx context.Context, tokenID uuid.UUID) error {
 	for _, token := range m.accessTokens {
 		if token.ID == tokenID {
 			token.Revoked = true
@@ -142,7 +143,7 @@ func (m *MockDB) RevokeAccessToken(tokenID uuid.UUID) error {
 	return nil
 }
 
-func (m *MockDB) RevokeRefreshToken(token string) error {
+func (m *MockDB) RevokeRefreshToken(ctx context.Context, token string) error {
 	if refreshToken, exists := m.refreshTokens[token]; exists {
 		refreshToken.Revoked = true
 		return nil
@@ -150,21 +151,21 @@ func (m *MockDB) RevokeRefreshToken(token string) error {
 	return nil
 }
 
-func (m *MockDB) CreateDeviceCode(deviceCode *db.DeviceCode) error {
+func (m *MockDB) CreateDeviceCode(ctx context.Context, deviceCode *db.DeviceCode) error {
 	deviceCode.ID = uuid.New()
 	deviceCode.CreatedAt = time.Now()
 	m.deviceCodes[deviceCode.DeviceCode] = deviceCode
 	return nil
 }
 
-func (m *MockDB) GetDeviceCode(deviceCode string) (*db.DeviceCode, error) {
+func (m *MockDB) GetDeviceCode(ctx context.Context, deviceCode string) (*db.DeviceCode, error) {
 	if device, exists := m.deviceCodes[deviceCode]; exists && device.ExpiresAt.After(time.Now()) {
 		return device, nil
 	}
 	return nil, auth.ErrExpiredToken
 }
 
-func (m *MockDB) GetDeviceCodeByUserCode(userCode string) (*db.DeviceCode, error) {
+func (m *MockDB) GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*db.DeviceCode, error) {
 	for _, device := range m.deviceCodes {
 		if device.UserCode == userCode && device.ExpiresAt.After(time.Now()) {
 			return device, nil
@@ -173,7 +174,7 @@ func (m *MockDB) GetDeviceCodeByUserCode(userCode string) (*db.DeviceCode, error
 	return nil, auth.ErrExpiredToken
 }
 
-func (m *MockDB) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
+func (m *MockDB) AuthorizeDeviceCode(ctx context.Context, userCode string, userID uuid.UUID) error {
 	for _, device := range m.deviceCodes {
 		if device.UserCode == userCode && device.ExpiresAt.After(time.Now()) {
 			device.Authorized = true
@@ -185,6 +186,22 @@ func (m *MockDB) AuthorizeDeviceCode(userCode string, userID uuid.UUID) error {
 }
 
 func (m *MockDB) Close() error {
+	return nil
+}
+
+func (m *MockDB) CleanupExpiredTokens(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockDB) CleanupExpiredCodes(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockDB) GetDatabaseStats(ctx context.Context) (*db.DatabaseStats, error) {
+	return &db.DatabaseStats{}, nil
+}
+
+func (m *MockDB) Ping(ctx context.Context) error {
 	return nil
 }
 
@@ -217,7 +234,7 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 		Password: string(hashedPassword),
 		Scopes:   []string{"openid", "profile", "email", "read"},
 	}
-	mockDatabase.CreateUser(testUser)
+	mockDatabase.CreateUser(context.Background(), testUser)
 
 	// Create test client
 	hashedSecret, _ := bcrypt.GenerateFromPassword([]byte("test-secret"), bcrypt.DefaultCost)
@@ -227,10 +244,10 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 		Name:         "Test Client",
 		RedirectURIs: []string{"http://localhost:8080/callback"},
 		Scopes:       []string{"openid", "profile", "email", "read", "write"},
-		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
+		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password", "implicit", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
 		IsPublic:     false,
 	}
-	mockDatabase.CreateClient(testClient)
+	mockDatabase.CreateClient(context.Background(), testClient)
 
 	return authService, mockDatabase
 }
@@ -245,8 +262,9 @@ func setupTestHandler() (*handlers.Handler, *auth.Service, *MockDB) {
 
 func TestAuthenticateUser(t *testing.T) {
 	authService, _ := setupTestAuth()
+	ctx := context.Background()
 
-	user, err := authService.AuthenticateUser("testuser", "testpassword")
+	user, err := authService.AuthenticateUser(ctx, "testuser", "testpassword")
 	if err != nil {
 		t.Errorf("Expected successful authentication, got error: %v", err)
 	}
@@ -254,7 +272,7 @@ func TestAuthenticateUser(t *testing.T) {
 		t.Errorf("Expected username 'testuser', got '%s'", user.Username)
 	}
 
-	_, err = authService.AuthenticateUser("testuser", "wrongpassword")
+	_, err = authService.AuthenticateUser(ctx, "testuser", "wrongpassword")
 	if err != auth.ErrInvalidCredentials {
 		t.Errorf("Expected ErrInvalidCredentials, got: %v", err)
 	}
@@ -262,8 +280,9 @@ func TestAuthenticateUser(t *testing.T) {
 
 func TestValidateClient(t *testing.T) {
 	authService, _ := setupTestAuth()
+	ctx := context.Background()
 
-	client, err := authService.ValidateClient("test-client", "test-secret")
+	client, err := authService.ValidateClient(ctx, "test-client", "test-secret")
 	if err != nil {
 		t.Errorf("Expected successful client validation, got error: %v", err)
 	}
@@ -271,12 +290,12 @@ func TestValidateClient(t *testing.T) {
 		t.Errorf("Expected client_id 'test-client', got '%s'", client.ClientID)
 	}
 
-	_, err = authService.ValidateClient("test-client", "wrong-secret")
+	_, err = authService.ValidateClient(ctx, "test-client", "wrong-secret")
 	if err != auth.ErrInvalidClient {
 		t.Errorf("Expected ErrInvalidClient, got: %v", err)
 	}
 
-	_, err = authService.ValidateClient("invalid-client", "test-secret")
+	_, err = authService.ValidateClient(ctx, "invalid-client", "test-secret")
 	if err != auth.ErrInvalidClient {
 		t.Errorf("Expected ErrInvalidClient, got: %v", err)
 	}
@@ -284,6 +303,7 @@ func TestValidateClient(t *testing.T) {
 
 func TestCreateAuthorizationCode(t *testing.T) {
 	authService, mockDb := setupTestAuth()
+	ctx := context.Background()
 
 	userID := uuid.New()
 	for _, user := range mockDb.users {
@@ -292,6 +312,7 @@ func TestCreateAuthorizationCode(t *testing.T) {
 	}
 
 	code, err := authService.CreateAuthorizationCode(
+		ctx,
 		userID,
 		"test-client",
 		"http://localhost:8080/callback",
@@ -318,6 +339,7 @@ func TestCreateAuthorizationCode(t *testing.T) {
 
 func TestClientCredentialsGrant(t *testing.T) {
 	authService, _ := setupTestAuth()
+	ctx := context.Background()
 
 	req := &auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -326,7 +348,7 @@ func TestClientCredentialsGrant(t *testing.T) {
 		Scope:        "read write",
 	}
 
-	response, err := authService.ClientCredentialsGrant(req)
+	response, err := authService.ClientCredentialsGrant(ctx, req)
 	if err != nil {
 		t.Errorf("Expected successful client credentials grant, got error: %v", err)
 	}

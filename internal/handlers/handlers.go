@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -72,7 +73,7 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 	responseType := strings.TrimSpace(r.URL.Query().Get("response_type"))
 	codeChallenge := strings.TrimSpace(r.URL.Query().Get("code_challenge"))
 	codeChallengeMethod := strings.TrimSpace(r.URL.Query().Get("code_challenge_method"))
-	_ = strings.TrimSpace(r.URL.Query().Get("nonce"))
+	nonce := strings.TrimSpace(r.URL.Query().Get("nonce"))
 	prompt := strings.TrimSpace(r.URL.Query().Get("prompt"))
 	maxAge := r.URL.Query().Get("max_age")
 
@@ -81,12 +82,12 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if responseType != "code" {
+	if responseType != "code" && responseType != "token" {
 		http.Error(w, "unsupported_response_type", http.StatusBadRequest)
 		return
 	}
 
-	client, err := h.db.GetClientByID(clientID)
+	client, err := h.db.GetClientByID(r.Context(), clientID)
 	if err != nil {
 		http.Error(w, "invalid_client", http.StatusBadRequest)
 		return
@@ -254,7 +255,8 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
             <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
             <input type="hidden" name="scope" value="{{.Scope}}">
             <input type="hidden" name="state" value="{{.State}}">
-            <input type="hidden" name="response_type" value="code">
+            <input type="hidden" name="response_type" value="{{.ResponseType}}">
+            <input type="hidden" name="nonce" value="{{.Nonce}}">
             <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
             <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
             
@@ -290,8 +292,10 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 		Scope               string
 		Scopes              []string
 		State               string
+		ResponseType        string
 		CodeChallenge       string
 		CodeChallengeMethod string
+		Nonce               string
 	}{
 		ClientID:            template.HTMLEscapeString(clientID),
 		ClientName:          template.HTMLEscapeString(client.Name),
@@ -299,8 +303,10 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 		Scope:               template.HTMLEscapeString(scope),
 		Scopes:              scopes,
 		State:               template.HTMLEscapeString(state),
+		ResponseType:        template.HTMLEscapeString(responseType),
 		CodeChallenge:       template.HTMLEscapeString(codeChallenge),
 		CodeChallengeMethod: template.HTMLEscapeString(codeChallengeMethod),
+		Nonce:               template.HTMLEscapeString(nonce),
 	}
 	
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -320,12 +326,14 @@ func (h *Handler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 	redirectURI := strings.TrimSpace(r.FormValue("redirect_uri"))
 	scope := strings.TrimSpace(r.FormValue("scope"))
 	state := strings.TrimSpace(r.FormValue("state"))
+	responseType := strings.TrimSpace(r.FormValue("response_type"))
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	codeChallenge := strings.TrimSpace(r.FormValue("code_challenge"))
 	codeChallengeMethod := strings.TrimSpace(r.FormValue("code_challenge_method"))
+	nonce := strings.TrimSpace(r.FormValue("nonce"))
 
-	if err := h.validateBasicParams(clientID, redirectURI, "code"); err != nil {
+	if err := h.validateBasicParams(clientID, redirectURI, responseType); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -342,7 +350,7 @@ func (h *Handler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.auth.AuthenticateUser(username, password)
+	user, err := h.auth.AuthenticateUser(r.Context(), username, password)
 	if err != nil {
 		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "access_denied", "Invalid credentials", state)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
@@ -354,15 +362,53 @@ func (h *Handler) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 		scopes = strings.Split(scope, " ")
 	}
 
-	code, err := h.auth.CreateAuthorizationCode(user.ID, clientID, redirectURI, scopes, codeChallenge, codeChallengeMethod)
-	if err != nil {
-		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "server_error", "Failed to create authorization code", state)
-		http.Redirect(w, r, redirectURL, http.StatusFound)
-		return
-	}
+	// Handle different response types
+	switch responseType {
+	case "code":
+		// Authorization Code Flow
+		code, err := h.auth.CreateAuthorizationCode(r.Context(), user.ID, clientID, redirectURI, scopes, codeChallenge, codeChallengeMethod)
+		if err != nil {
+			redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "server_error", "Failed to create authorization code", state)
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
 
-	redirectURL := h.auth.CreateRedirectURL(redirectURI, code, state)
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+		redirectURL := h.auth.CreateRedirectURL(redirectURI, code, state)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+
+	case "token":
+		// Implicit Grant Flow
+		authReq := &auth.AuthorizeRequest{
+			ResponseType: responseType,
+			ClientID:     clientID,
+			RedirectURI:  redirectURI,
+			Scope:        scope,
+			State:        state,
+			Nonce:        nonce,
+		}
+
+		response, err := h.auth.ImplicitGrant(r.Context(), authReq, user.ID)
+		if err != nil {
+			redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "server_error", "Failed to generate tokens", state)
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
+
+		// Generate ID token if needed
+		if response.GenerateIDToken {
+			idToken, err := h.generateIDTokenForImplicit(authReq, response, user)
+			if err == nil {
+				response.IDToken = idToken
+			}
+		}
+
+		redirectURL := h.auth.CreateImplicitRedirectURL(redirectURI, response)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+
+	default:
+		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "unsupported_response_type", "Unsupported response type", state)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+	}
 }
 
 func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
@@ -390,17 +436,17 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 
 	switch req.GrantType {
 	case "authorization_code":
-		response, err = h.auth.ExchangeCodeForToken(req)
+		response, err = h.auth.ExchangeCodeForToken(r.Context(), req)
 	case "refresh_token":
-		response, err = h.auth.RefreshAccessToken(req)
+		response, err = h.auth.RefreshAccessToken(r.Context(), req)
 	case "client_credentials":
-		response, err = h.auth.ClientCredentialsGrant(req)
+		response, err = h.auth.ClientCredentialsGrant(r.Context(), req)
 	case "password":
-		response, err = h.auth.ResourceOwnerPasswordCredentialsGrant(req)
+		response, err = h.auth.ResourceOwnerPasswordCredentialsGrant(r.Context(), req)
 	case "urn:ietf:params:oauth:grant-type:device_code":
-		response, err = h.auth.DeviceCodeGrant(req)
+		response, err = h.auth.DeviceCodeGrant(r.Context(), req)
 	case "urn:ietf:params:oauth:grant-type:jwt-bearer":
-		response, err = h.auth.JWTBearerGrant(req)
+		response, err = h.auth.JWTBearerGrant(r.Context(), req)
 	default:
 		h.sendError(w, "unsupported_grant_type", "Grant type not supported", http.StatusBadRequest)
 		return
@@ -439,7 +485,7 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbToken, err := h.db.GetAccessToken(token)
+	dbToken, err := h.db.GetAccessToken(r.Context(), token)
 	if err != nil || dbToken.Revoked {
 		response := map[string]interface{}{"active": false}
 		json.NewEncoder(w).Encode(response)
@@ -479,7 +525,7 @@ func (h *Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbToken, err := h.db.GetAccessToken(token)
+	dbToken, err := h.db.GetAccessToken(r.Context(), token)
 	if err != nil || dbToken.Revoked {
 		w.Header().Set("WWW-Authenticate", "Bearer error=\"invalid_token\"")
 		h.sendError(w, "invalid_token", "Token has been revoked", http.StatusUnauthorized)
@@ -496,7 +542,7 @@ func (h *Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.db.GetUserByID(claims.UserID)
+	user, err := h.db.GetUserByID(r.Context(), claims.UserID)
 	if err != nil {
 		h.sendError(w, "server_error", "Failed to get user info", http.StatusInternalServerError)
 		return
@@ -626,7 +672,7 @@ func (h *Handler) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	user, err := h.auth.AuthenticateUser(username, password)
+	user, err := h.auth.AuthenticateUser(r.Context(), username, password)
 	if err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
@@ -680,7 +726,7 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		IsPublic:     req.IsPublic,
 	}
 
-	if err := h.db.CreateClient(client); err != nil {
+	if err := h.db.CreateClient(r.Context(), client); err != nil {
 		h.sendError(w, "server_error", "Failed to create client", http.StatusInternalServerError)
 		return
 	}
@@ -701,7 +747,7 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListClients(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
-	clients, err := h.db.GetAllClients()
+	clients, err := h.db.GetAllClients(r.Context())
 	if err != nil {
 		h.sendError(w, "server_error", "Failed to retrieve clients", http.StatusInternalServerError)
 		return
@@ -752,7 +798,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Scopes:   req.Scopes,
 	}
 
-	if err := h.db.CreateUser(user); err != nil {
+	if err := h.db.CreateUser(r.Context(), user); err != nil {
 		h.sendError(w, "server_error", "Failed to create user", http.StatusInternalServerError)
 		return
 	}
@@ -897,7 +943,7 @@ func (h *Handler) DeviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	baseURL := "http://localhost:8080" // This should come from config
-	response, err := h.auth.InitiateDeviceAuthorization(req, baseURL)
+	response, err := h.auth.InitiateDeviceAuthorization(r.Context(), req, baseURL)
 	if err != nil {
 		h.handleTokenError(w, err)
 		return
@@ -1026,13 +1072,13 @@ func (h *Handler) handleDeviceVerificationPost(w http.ResponseWriter, r *http.Re
 		return
 	}
 	
-	user, err := h.auth.AuthenticateUser(username, password)
+	user, err := h.auth.AuthenticateUser(r.Context(), username, password)
 	if err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	
-	if err := h.auth.AuthorizeDeviceCode(userCode, user.ID); err != nil {
+	if err := h.auth.AuthorizeDeviceCode(r.Context(), userCode, user.ID); err != nil {
 		http.Error(w, "Invalid device code", http.StatusBadRequest)
 		return
 	}
@@ -1275,7 +1321,7 @@ func (h *Handler) generateIDToken(req *auth.TokenRequest, response *auth.TokenRe
 		return "", nil
 	}
 	
-	user, err := h.db.GetUserByID(claims.UserID)
+	user, err := h.db.GetUserByID(context.Background(), claims.UserID)
 	if err != nil {
 		return "", err
 	}
@@ -1285,4 +1331,11 @@ func (h *Handler) generateIDToken(req *auth.TokenRequest, response *auth.TokenRe
 	ttl := 15 * time.Minute
 	
 	return h.oidc.GenerateIDToken(user, req.ClientID, nonce, authTime, ttl)
+}
+
+func (h *Handler) generateIDTokenForImplicit(req *auth.AuthorizeRequest, response *auth.ImplicitGrantResponse, user *db.User) (string, error) {
+	authTime := time.Now()
+	ttl := 15 * time.Minute
+	
+	return h.oidc.GenerateIDToken(user, req.ClientID, response.Nonce, authTime, ttl)
 }
