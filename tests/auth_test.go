@@ -244,7 +244,7 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 		Name:         "Test Client",
 		RedirectURIs: []string{"http://localhost:8080/callback"},
 		Scopes:       []string{"openid", "profile", "email", "read", "write"},
-		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password", "implicit", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer"},
+		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password", "implicit", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange"},
 		IsPublic:     false,
 	}
 	mockDatabase.CreateClient(context.Background(), testClient)

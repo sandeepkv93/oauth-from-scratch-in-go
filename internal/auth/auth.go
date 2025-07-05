@@ -56,18 +56,26 @@ type AuthorizeRequest struct {
 }
 
 type TokenRequest struct {
-	GrantType    string `json:"grant_type"`
-	Code         string `json:"code,omitempty"`
-	RedirectURI  string `json:"redirect_uri,omitempty"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	Scope        string `json:"scope,omitempty"`
-	CodeVerifier string `json:"code_verifier,omitempty"`
-	Username     string `json:"username,omitempty"`
-	Password     string `json:"password,omitempty"`
-	DeviceCode   string `json:"device_code,omitempty"`
-	Assertion    string `json:"assertion,omitempty"`
+	GrantType         string `json:"grant_type"`
+	Code              string `json:"code,omitempty"`
+	RedirectURI       string `json:"redirect_uri,omitempty"`
+	ClientID          string `json:"client_id"`
+	ClientSecret      string `json:"client_secret,omitempty"`
+	RefreshToken      string `json:"refresh_token,omitempty"`
+	Scope             string `json:"scope,omitempty"`
+	CodeVerifier      string `json:"code_verifier,omitempty"`
+	Username          string `json:"username,omitempty"`
+	Password          string `json:"password,omitempty"`
+	DeviceCode        string `json:"device_code,omitempty"`
+	Assertion         string `json:"assertion,omitempty"`
+	// Token Exchange fields (RFC 8693)
+	SubjectToken     string `json:"subject_token,omitempty"`
+	SubjectTokenType string `json:"subject_token_type,omitempty"`
+	ActorToken       string `json:"actor_token,omitempty"`
+	ActorTokenType   string `json:"actor_token_type,omitempty"`
+	RequestedTokenType string `json:"requested_token_type,omitempty"`
+	Audience         string `json:"audience,omitempty"`
+	Resource         string `json:"resource,omitempty"`
 }
 
 type TokenResponse struct {
@@ -522,6 +530,234 @@ func (s *Service) JWTBearerGrant(ctx context.Context, req *TokenRequest) (*Token
 	}
 
 	return s.createTokenPair(ctx, userID, issuer, scopes)
+}
+
+// TokenExchange implements RFC 8693 Token Exchange
+func (s *Service) TokenExchange(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
+	// Validate client
+	client, err := s.ValidateClient(ctx, req.ClientID, req.ClientSecret)
+	if err != nil {
+		return nil, ErrInvalidClient
+	}
+	
+	// Check if client supports token exchange
+	if !s.hasGrantType(client, "urn:ietf:params:oauth:grant-type:token-exchange") {
+		return nil, ErrInvalidGrant
+	}
+	
+	// Validate required parameters
+	if req.SubjectToken == "" {
+		return nil, errors.New("subject_token is required")
+	}
+	
+	if req.SubjectTokenType == "" {
+		return nil, errors.New("subject_token_type is required")
+	}
+	
+	// Validate subject token type
+	if !s.isValidTokenType(req.SubjectTokenType) {
+		return nil, errors.New("unsupported subject_token_type")
+	}
+	
+	// Validate actor token if provided
+	if req.ActorToken != "" && req.ActorTokenType == "" {
+		return nil, errors.New("actor_token_type is required when actor_token is provided")
+	}
+	
+	if req.ActorTokenType != "" && !s.isValidTokenType(req.ActorTokenType) {
+		return nil, errors.New("unsupported actor_token_type")
+	}
+	
+	// Validate requested token type (optional, defaults to access_token)
+	requestedTokenType := req.RequestedTokenType
+	if requestedTokenType == "" {
+		requestedTokenType = "urn:ietf:params:oauth:token-type:access_token"
+	}
+	
+	if !s.isValidTokenType(requestedTokenType) {
+		return nil, errors.New("unsupported requested_token_type")
+	}
+	
+	// Validate and parse subject token
+	subjectClaims, err := s.validateTokenForExchange(ctx, req.SubjectToken, req.SubjectTokenType)
+	if err != nil {
+		return nil, fmt.Errorf("invalid subject_token: %v", err)
+	}
+	
+	// Validate actor token if provided
+	var actorClaims *jwtpkg.Claims
+	if req.ActorToken != "" {
+		actorClaims, err = s.validateTokenForExchange(ctx, req.ActorToken, req.ActorTokenType)
+		if err != nil {
+			return nil, fmt.Errorf("invalid actor_token: %v", err)
+		}
+	}
+	
+	// Determine scopes for the new token
+	scopes := s.determineExchangeScopes(req.Scope, subjectClaims.Scopes, client.Scopes)
+	
+	// Validate scopes
+	if err := s.ValidateScopes(scopes, client.Scopes); err != nil {
+		return nil, err
+	}
+	
+	// Determine the effective user ID
+	userID := subjectClaims.UserID
+	if actorClaims != nil {
+		// In delegation scenarios, the actor becomes the effective user
+		userID = actorClaims.UserID
+	}
+	
+	// Create the new token based on requested type
+	switch requestedTokenType {
+	case "urn:ietf:params:oauth:token-type:access_token":
+		return s.createExchangeTokenPair(ctx, userID, req.ClientID, scopes, subjectClaims, actorClaims)
+	case "urn:ietf:params:oauth:token-type:refresh_token":
+		// For refresh token requests, we still need to return an access token pair
+		return s.createExchangeTokenPair(ctx, userID, req.ClientID, scopes, subjectClaims, actorClaims)
+	default:
+		return nil, errors.New("unsupported requested_token_type")
+	}
+}
+
+// validateTokenForExchange validates a token for use in token exchange
+func (s *Service) validateTokenForExchange(ctx context.Context, token, tokenType string) (*jwtpkg.Claims, error) {
+	switch tokenType {
+	case "urn:ietf:params:oauth:token-type:access_token":
+		// Validate as access token
+		claims, err := s.jwt.ValidateAccessToken(token)
+		if err != nil {
+			return nil, err
+		}
+		
+		// Verify token exists in database and is not revoked
+		_, err = s.db.GetAccessToken(ctx, token)
+		if err != nil {
+			return nil, errors.New("token not found or revoked")
+		}
+		
+		return claims, nil
+		
+	case "urn:ietf:params:oauth:token-type:refresh_token":
+		// For refresh tokens, we need to validate and extract claims
+		refreshToken, err := s.db.GetRefreshToken(ctx, token)
+		if err != nil {
+			return nil, errors.New("refresh token not found or expired")
+		}
+		
+		// Create claims from refresh token data
+		return &jwtpkg.Claims{
+			UserID:   refreshToken.UserID,
+			ClientID: refreshToken.ClientID,
+			Scopes:   refreshToken.Scopes,
+		}, nil
+		
+	case "urn:ietf:params:oauth:token-type:id_token":
+		// Validate as ID token (JWT)
+		claims, err := s.jwt.ValidateAccessToken(token) // Reuse access token validation for JWT structure
+		if err != nil {
+			return nil, err
+		}
+		return claims, nil
+		
+	default:
+		return nil, errors.New("unsupported token type")
+	}
+}
+
+// isValidTokenType checks if a token type is supported
+func (s *Service) isValidTokenType(tokenType string) bool {
+	validTypes := []string{
+		"urn:ietf:params:oauth:token-type:access_token",
+		"urn:ietf:params:oauth:token-type:refresh_token",
+		"urn:ietf:params:oauth:token-type:id_token",
+		"urn:ietf:params:oauth:token-type:saml1",
+		"urn:ietf:params:oauth:token-type:saml2",
+	}
+	
+	for _, validType := range validTypes {
+		if tokenType == validType {
+			return true
+		}
+	}
+	return false
+}
+
+// determineExchangeScopes determines the scopes for the exchanged token
+func (s *Service) determineExchangeScopes(requestedScope string, subjectScopes, clientScopes []string) []string {
+	if requestedScope != "" {
+		// Use explicitly requested scopes
+		return strings.Split(requestedScope, " ")
+	}
+	
+	// Use subject token scopes, but limit to client's allowed scopes
+	var scopes []string
+	for _, scope := range subjectScopes {
+		for _, clientScope := range clientScopes {
+			if scope == clientScope {
+				scopes = append(scopes, scope)
+				break
+			}
+		}
+	}
+	
+	return scopes
+}
+
+// createExchangeTokenPair creates a token pair for token exchange
+func (s *Service) createExchangeTokenPair(ctx context.Context, userID uuid.UUID, clientID string, scopes []string, subjectClaims, actorClaims *jwtpkg.Claims) (*TokenResponse, error) {
+	tokenID := uuid.New()
+	
+	// Create access token with exchange metadata
+	accessToken, err := s.jwt.GenerateAccessTokenWithClaims(userID, clientID, scopes, tokenID, s.config.Auth.AccessTokenTTL, map[string]interface{}{
+		"token_exchange": true,
+		"subject_client": subjectClaims.ClientID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	
+	// Store access token in database
+	dbAccessToken := &db.AccessToken{
+		Token:     accessToken,
+		ClientID:  clientID,
+		UserID:    userID,
+		Scopes:    scopes,
+		ExpiresAt: time.Now().Add(s.config.Auth.AccessTokenTTL),
+	}
+	
+	if err := s.db.CreateAccessToken(ctx, dbAccessToken); err != nil {
+		return nil, err
+	}
+	
+	// Generate refresh token
+	refreshToken, err := s.jwt.GenerateRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+	
+	dbRefreshToken := &db.RefreshToken{
+		Token:           refreshToken,
+		AccessTokenID:   dbAccessToken.ID,
+		ClientID:        clientID,
+		UserID:          userID,
+		Scopes:          scopes,
+		ExpiresAt:       time.Now().Add(s.config.Auth.RefreshTokenTTL),
+	}
+	
+	if err := s.db.CreateRefreshToken(ctx, dbRefreshToken); err != nil {
+		return nil, err
+	}
+	
+	response := &TokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(s.config.Auth.AccessTokenTTL.Seconds()),
+		RefreshToken: refreshToken,
+		Scope:        strings.Join(scopes, " "),
+	}
+	
+	return response, nil
 }
 
 // ImplicitGrant handles the OAuth 2.0 Implicit Grant flow
