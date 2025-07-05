@@ -44,26 +44,28 @@ type AuthorizationCode struct {
 }
 
 type AccessToken struct {
-	ID        uuid.UUID `json:"id" db:"id"`
-	Token     string    `json:"token" db:"token"`
-	ClientID  string    `json:"client_id" db:"client_id"`
-	UserID    uuid.UUID `json:"user_id" db:"user_id"`
-	Scopes    []string  `json:"scopes" db:"scopes"`
-	ExpiresAt time.Time `json:"expires_at" db:"expires_at"`
-	Revoked   bool      `json:"revoked" db:"revoked"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	ID        uuid.UUID  `json:"id" db:"id"`
+	Token     string     `json:"token" db:"token"`
+	ClientID  string     `json:"client_id" db:"client_id"`
+	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
+	Scopes    []string   `json:"scopes" db:"scopes"`
+	ExpiresAt time.Time  `json:"expires_at" db:"expires_at"`
+	Revoked   bool       `json:"revoked" db:"revoked"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
 }
 
 type RefreshToken struct {
-	ID              uuid.UUID `json:"id" db:"id"`
-	Token           string    `json:"token" db:"token"`
-	AccessTokenID   uuid.UUID `json:"access_token_id" db:"access_token_id"`
-	ClientID        string    `json:"client_id" db:"client_id"`
-	UserID          uuid.UUID `json:"user_id" db:"user_id"`
-	Scopes          []string  `json:"scopes" db:"scopes"`
-	ExpiresAt       time.Time `json:"expires_at" db:"expires_at"`
-	Revoked         bool      `json:"revoked" db:"revoked"`
-	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	ID              uuid.UUID  `json:"id" db:"id"`
+	Token           string     `json:"token" db:"token"`
+	AccessTokenID   uuid.UUID  `json:"access_token_id" db:"access_token_id"`
+	ClientID        string     `json:"client_id" db:"client_id"`
+	UserID          uuid.UUID  `json:"user_id" db:"user_id"`
+	Scopes          []string   `json:"scopes" db:"scopes"`
+	ExpiresAt       time.Time  `json:"expires_at" db:"expires_at"`
+	Revoked         bool       `json:"revoked" db:"revoked"`
+	RevokedAt       *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
 }
 
 type Scope struct {

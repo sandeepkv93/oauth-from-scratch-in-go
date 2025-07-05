@@ -27,12 +27,17 @@ type ServerConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	Name     string
-	SSLMode  string
+	Host            string
+	Port            string
+	User            string
+	Password        string
+	Name            string
+	SSLMode         string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
+	QueryTimeout    time.Duration
 }
 
 type AuthConfig struct {
@@ -67,12 +72,17 @@ func Load() *Config {
 			BaseURL:      getEnv("BASE_URL", ""),
 		},
 		Database: DatabaseConfig{
-			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnv("DB_PORT", "5432"),
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", ""),
-			Name:     getEnv("DB_NAME", "oauth_server"),
-			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
+			Host:            getEnv("DB_HOST", "localhost"),
+			Port:            getEnv("DB_PORT", "5432"),
+			User:            getEnv("DB_USER", "postgres"),
+			Password:        getEnv("DB_PASSWORD", ""),
+			Name:            getEnv("DB_NAME", "oauth_server"),
+			SSLMode:         getEnv("DB_SSL_MODE", "disable"),
+			MaxOpenConns:    getIntEnv("DB_MAX_OPEN_CONNS", 25),
+			MaxIdleConns:    getIntEnv("DB_MAX_IDLE_CONNS", 5),
+			ConnMaxLifetime: getDurationEnv("DB_CONN_MAX_LIFETIME", 30*time.Minute),
+			ConnMaxIdleTime: getDurationEnv("DB_CONN_MAX_IDLE_TIME", 5*time.Minute),
+			QueryTimeout:    getDurationEnv("DB_QUERY_TIMEOUT", 30*time.Second),
 		},
 		Auth: AuthConfig{
 			JWTSecret:           getEnv("JWT_SECRET", generateRandomSecret()),
