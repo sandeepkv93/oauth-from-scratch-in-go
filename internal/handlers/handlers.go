@@ -7,17 +7,20 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"oauth-server/internal/auth"
 	"oauth-server/internal/db"
+	"oauth-server/internal/oidc"
 )
 
 type Handler struct {
 	auth *auth.Service
 	db   db.DatabaseInterface
+	oidc *oidc.Service
 }
 
 type ErrorResponse struct {
@@ -25,10 +28,11 @@ type ErrorResponse struct {
 	ErrorDescription string `json:"error_description,omitempty"`
 }
 
-func NewHandler(authService *auth.Service, database db.DatabaseInterface) *Handler {
+func NewHandler(authService *auth.Service, database db.DatabaseInterface, oidcService *oidc.Service) *Handler {
 	return &Handler{
 		auth: authService,
 		db:   database,
+		oidc: oidcService,
 	}
 }
 
@@ -41,6 +45,9 @@ func (h *Handler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/userinfo", h.UserInfo).Methods("GET")
 	r.HandleFunc("/revoke", h.Revoke).Methods("POST")
 	r.HandleFunc("/login", h.Login).Methods("GET", "POST")
+	r.HandleFunc("/logout", h.Logout).Methods("GET", "POST")
+	r.HandleFunc("/session/check", h.CheckSession).Methods("GET")
+	r.HandleFunc("/session/iframe", h.SessionIframe).Methods("GET")
 	
 	apiRouter := r.PathPrefix("/api").Subrouter()
 	apiRouter.HandleFunc("/clients", h.CreateClient).Methods("POST")
@@ -65,6 +72,9 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 	responseType := strings.TrimSpace(r.URL.Query().Get("response_type"))
 	codeChallenge := strings.TrimSpace(r.URL.Query().Get("code_challenge"))
 	codeChallengeMethod := strings.TrimSpace(r.URL.Query().Get("code_challenge_method"))
+	_ = strings.TrimSpace(r.URL.Query().Get("nonce"))
+	prompt := strings.TrimSpace(r.URL.Query().Get("prompt"))
+	maxAge := r.URL.Query().Get("max_age")
 
 	if err := h.validateBasicParams(clientID, redirectURI, responseType); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -96,6 +106,17 @@ func (h *Handler) showAuthorizePage(w http.ResponseWriter, r *http.Request) {
 		redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "invalid_scope", "Invalid scope requested", state)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
+	}
+
+	prompts := h.oidc.ValidatePromptParameter(prompt)
+	_ = maxAge
+
+	for _, p := range prompts {
+		if p == "none" {
+			redirectURL := h.auth.CreateErrorRedirectURL(redirectURI, "interaction_required", "User interaction required", state)
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
 	}
 
 	tmpl := `
@@ -387,6 +408,13 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if response != nil && h.shouldGenerateIDToken(req, response) {
+		idToken, err := h.generateIDToken(req, response)
+		if err == nil {
+			response.IDToken = idToken
+		}
+	}
+
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -436,19 +464,27 @@ func (h *Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 	
 	token := h.extractBearerToken(r)
 	if token == "" {
+		w.Header().Set("WWW-Authenticate", "Bearer")
 		h.sendError(w, "invalid_request", "Bearer token required", http.StatusUnauthorized)
 		return
 	}
 
 	claims, err := h.auth.ValidateAccessToken(token)
 	if err != nil {
+		w.Header().Set("WWW-Authenticate", "Bearer error=\"invalid_token\"")
 		h.sendError(w, "invalid_token", "Token is invalid", http.StatusUnauthorized)
 		return
 	}
 
 	dbToken, err := h.db.GetAccessToken(token)
 	if err != nil || dbToken.Revoked {
+		w.Header().Set("WWW-Authenticate", "Bearer error=\"invalid_token\"")
 		h.sendError(w, "invalid_token", "Token has been revoked", http.StatusUnauthorized)
+		return
+	}
+
+	if !h.oidc.HasOpenIDScope(claims.Scopes) {
+		h.sendError(w, "insufficient_scope", "OpenID scope required", http.StatusForbidden)
 		return
 	}
 
@@ -463,12 +499,7 @@ func (h *Handler) UserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
-		"sub":      user.ID,
-		"username": user.Username,
-		"email":    user.Email,
-	}
-
+	response := h.oidc.BuildUserInfoResponseEnhanced(user, claims.Scopes)
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -1019,4 +1050,236 @@ func (h *Handler) handleDeviceVerificationPost(w http.ResponseWriter, r *http.Re
     <p>You can now return to your device to continue.</p>
 </body>
 </html>`)
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		h.showLogoutPage(w, r)
+		return
+	}
+	
+	h.handleLogoutPost(w, r)
+}
+
+func (h *Handler) showLogoutPage(w http.ResponseWriter, r *http.Request) {
+	idTokenHint := r.URL.Query().Get("id_token_hint")
+	postLogoutRedirectURI := r.URL.Query().Get("post_logout_redirect_uri")
+	state := r.URL.Query().Get("state")
+	
+	tmpl := `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Server - Logout</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            max-width: 500px; 
+            margin: 100px auto; 
+            padding: 20px;
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        .logout-container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+        h1 { 
+            margin: 0 0 30px; 
+            font-size: 32px; 
+            font-weight: 300;
+        }
+        .logout-message {
+            font-size: 18px;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+        .logout-form {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        button {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 12px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+        button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+            transform: translateY(-2px);
+        }
+        .cancel-btn {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .cancel-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="logout-container">
+        <h1>Sign Out</h1>
+        <div class="logout-message">
+            Are you sure you want to sign out of your account?
+        </div>
+        <form method="POST" class="logout-form">
+            <input type="hidden" name="id_token_hint" value="{{.IDTokenHint}}">
+            <input type="hidden" name="post_logout_redirect_uri" value="{{.PostLogoutRedirectURI}}">
+            <input type="hidden" name="state" value="{{.State}}">
+            <button type="submit" name="action" value="logout">Sign Out</button>
+            <button type="button" class="cancel-btn" onclick="history.back()">Cancel</button>
+        </form>
+    </div>
+</body>
+</html>`
+
+	data := struct {
+		IDTokenHint           string
+		PostLogoutRedirectURI string
+		State                 string
+	}{
+		IDTokenHint:           idTokenHint,
+		PostLogoutRedirectURI: postLogoutRedirectURI,
+		State:                 state,
+	}
+
+	t, err := template.New("logout").Parse(tmpl)
+	if err != nil {
+		http.Error(w, "Template error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	t.Execute(w, data)
+}
+
+func (h *Handler) handleLogoutPost(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	
+	action := r.FormValue("action")
+	if action != "logout" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	
+	_ = r.FormValue("id_token_hint")
+	postLogoutRedirectURI := r.FormValue("post_logout_redirect_uri")
+	state := r.FormValue("state")
+	
+	if postLogoutRedirectURI != "" {
+		logoutURL := h.oidc.GenerateLogoutURL(postLogoutRedirectURI, state)
+		if logoutURL != "" {
+			http.Redirect(w, r, logoutURL, http.StatusFound)
+			return
+		}
+	}
+	
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Signed Out</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+        .success { color: #28a745; font-size: 24px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="success">✅ Successfully Signed Out</div>
+    <p>You have been signed out of your account.</p>
+</body>
+</html>`)
+}
+
+func (h *Handler) CheckSession(w http.ResponseWriter, r *http.Request) {
+	clientID := r.URL.Query().Get("client_id")
+	sessionState := r.URL.Query().Get("session_state")
+	
+	w.Header().Set("Content-Type", "application/json")
+	
+	response := map[string]interface{}{
+		"session_state": sessionState,
+		"client_id":     clientID,
+		"status":        "unchanged",
+	}
+	
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *Handler) SessionIframe(w http.ResponseWriter, r *http.Request) {
+	iframe := `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Session Management</title>
+</head>
+<body>
+    <script>
+        function receiveMessage(e) {
+            if (e.data === "session_changed") {
+                e.source.postMessage("changed", e.origin);
+            } else {
+                e.source.postMessage("unchanged", e.origin);
+            }
+        }
+        window.addEventListener("message", receiveMessage, false);
+    </script>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	fmt.Fprint(w, iframe)
+}
+
+func (h *Handler) shouldGenerateIDToken(req *auth.TokenRequest, response *auth.TokenResponse) bool {
+	if response.Scope == "" {
+		return false
+	}
+	
+	scopes := strings.Split(response.Scope, " ")
+	return h.oidc.HasOpenIDScope(scopes)
+}
+
+func (h *Handler) generateIDToken(req *auth.TokenRequest, response *auth.TokenResponse) (string, error) {
+	claims, err := h.auth.ValidateAccessToken(response.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	
+	if claims.UserID == uuid.Nil {
+		return "", nil
+	}
+	
+	user, err := h.db.GetUserByID(claims.UserID)
+	if err != nil {
+		return "", err
+	}
+	
+	nonce := ""
+	authTime := time.Now()
+	ttl := 15 * time.Minute
+	
+	return h.oidc.GenerateIDToken(user, req.ClientID, nonce, authTime, ttl)
 }

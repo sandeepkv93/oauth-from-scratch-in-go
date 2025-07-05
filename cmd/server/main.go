@@ -60,7 +60,7 @@ func main() {
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, baseURL)
 	
-	handler := handlers.NewHandler(authService, database)
+	handler := handlers.NewHandler(authService, database, oidcService)
 	middlewareManager := middleware.NewMiddleware(authService, metricsService)
 	
 	router := mux.NewRouter()

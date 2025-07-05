@@ -1,6 +1,8 @@
 package oidc
 
 import (
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -145,23 +147,28 @@ func (s *Service) GetWellKnownConfiguration(baseURL string) map[string]interface
 		"userinfo_endpoint":                  baseURL + "/userinfo",
 		"jwks_uri":                           baseURL + "/.well-known/jwks.json",
 		"registration_endpoint":              baseURL + "/api/clients",
-		"scopes_supported":                   []string{"openid", "profile", "email", "address", "phone"},
+		"end_session_endpoint":               baseURL + "/logout",
+		"check_session_iframe":               baseURL + "/session/check",
+		"scopes_supported":                   s.GetSupportedScopes(),
 		"response_types_supported":           []string{"code", "id_token", "token id_token", "code id_token", "code token", "code token id_token"},
 		"response_modes_supported":           []string{"query", "fragment", "form_post"},
-		"grant_types_supported":              []string{"authorization_code", "implicit", "refresh_token", "client_credentials", "password"},
+		"grant_types_supported":              []string{"authorization_code", "implicit", "refresh_token", "client_credentials", "password", "urn:ietf:params:oauth:grant-type:device_code"},
 		"subject_types_supported":            []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"HS256", "RS256"},
-		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
-		"claims_supported": []string{
-			"iss", "sub", "aud", "exp", "iat", "auth_time", "nonce",
-			"name", "given_name", "family_name", "middle_name", "nickname",
-			"preferred_username", "profile", "picture", "website",
-			"email", "email_verified", "gender", "birthdate", "zoneinfo",
-			"locale", "phone_number", "phone_number_verified", "address", "updated_at",
-		},
-		"code_challenge_methods_supported": []string{"plain", "S256"},
-		"introspection_endpoint":           baseURL + "/introspect",
-		"revocation_endpoint":              baseURL + "/revoke",
+		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic", "none"},
+		"claims_supported":                   s.GetSupportedClaims(),
+		"claims_parameter_supported":         true,
+		"request_parameter_supported":        false,
+		"request_uri_parameter_supported":    false,
+		"require_request_uri_registration":   false,
+		"code_challenge_methods_supported":   []string{"plain", "S256"},
+		"introspection_endpoint":             baseURL + "/introspect",
+		"revocation_endpoint":                baseURL + "/revoke",
+		"device_authorization_endpoint":      baseURL + "/device_authorization",
+		"frontchannel_logout_supported":     true,
+		"frontchannel_logout_session_supported": true,
+		"backchannel_logout_supported":      false,
+		"backchannel_logout_session_supported": false,
 	}
 }
 
@@ -172,4 +179,124 @@ func (s *Service) HasOpenIDScope(scopes []string) bool {
 		}
 	}
 	return false
+}
+
+type SessionInfo struct {
+	UserID    string    `json:"user_id"`
+	ClientID  string    `json:"client_id"`
+	AuthTime  time.Time `json:"auth_time"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Scopes    []string  `json:"scopes"`
+}
+
+type LogoutRequest struct {
+	IDTokenHint           string `json:"id_token_hint,omitempty"`
+	PostLogoutRedirectURI string `json:"post_logout_redirect_uri,omitempty"`
+	State                 string `json:"state,omitempty"`
+}
+
+func (s *Service) ValidateLogoutRequest(req *LogoutRequest, client *db.Client) error {
+	if req.PostLogoutRedirectURI != "" {
+		valid := false
+		for _, uri := range client.RedirectURIs {
+			if uri == req.PostLogoutRedirectURI {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return errors.New("invalid post logout redirect URI")
+		}
+	}
+	return nil
+}
+
+func (s *Service) BuildUserInfoResponseEnhanced(user *db.User, scopes []string) *UserInfoResponse {
+	response := &UserInfoResponse{
+		Subject: user.ID.String(),
+	}
+
+	for _, scope := range scopes {
+		switch scope {
+		case "profile":
+			response.PreferredUsername = user.Username
+			response.UpdatedAt = user.UpdatedAt.Unix()
+		case "email":
+			response.Email = user.Email
+			response.EmailVerified = true
+		case "address":
+		case "phone":
+		}
+	}
+
+	return response
+}
+
+func (s *Service) GenerateLogoutURL(postLogoutRedirectURI, state string) string {
+	if postLogoutRedirectURI == "" {
+		return ""
+	}
+	
+	logoutURL := postLogoutRedirectURI
+	if state != "" {
+		separator := "?"
+		if strings.Contains(logoutURL, "?") {
+			separator = "&"
+		}
+		logoutURL += separator + "state=" + state
+	}
+	
+	return logoutURL
+}
+
+func (s *Service) ValidatePromptParameter(prompt string) []string {
+	if prompt == "" {
+		return []string{}
+	}
+	
+	validPrompts := []string{"none", "login", "consent", "select_account"}
+	prompts := strings.Split(prompt, " ")
+	
+	var validatedPrompts []string
+	for _, p := range prompts {
+		for _, valid := range validPrompts {
+			if p == valid {
+				validatedPrompts = append(validatedPrompts, p)
+				break
+			}
+		}
+	}
+	
+	return validatedPrompts
+}
+
+func (s *Service) ShouldPromptLogin(prompts []string, authTime time.Time, maxAge int) bool {
+	for _, prompt := range prompts {
+		if prompt == "login" {
+			return true
+		}
+		if prompt == "none" {
+			return false
+		}
+	}
+	
+	if maxAge > 0 && time.Since(authTime) > time.Duration(maxAge)*time.Second {
+		return true
+	}
+	
+	return false
+}
+
+func (s *Service) GetSupportedScopes() []string {
+	return []string{"openid", "profile", "email", "address", "phone", "offline_access"}
+}
+
+func (s *Service) GetSupportedClaims() []string {
+	return []string{
+		"iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "acr", "amr", "azp",
+		"name", "given_name", "family_name", "middle_name", "nickname",
+		"preferred_username", "profile", "picture", "website",
+		"email", "email_verified", "gender", "birthdate", "zoneinfo",
+		"locale", "phone_number", "phone_number_verified", "address", "updated_at",
+	}
 }

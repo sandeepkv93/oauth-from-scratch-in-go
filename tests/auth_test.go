@@ -9,6 +9,8 @@ import (
 	"oauth-server/internal/auth"
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
+	"oauth-server/internal/handlers"
+	"oauth-server/internal/oidc"
 	"oauth-server/pkg/jwt"
 )
 
@@ -222,12 +224,20 @@ func setupTestAuth() (*auth.Service, *MockDB) {
 		Name:         "Test Client",
 		RedirectURIs: []string{"http://localhost:8080/callback"},
 		Scopes:       []string{"openid", "profile", "email", "read", "write"},
-		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials"},
+		GrantTypes:   []string{"authorization_code", "refresh_token", "client_credentials", "password"},
 		IsPublic:     false,
 	}
 	mockDatabase.CreateClient(testClient)
 
 	return authService, mockDatabase
+}
+
+func setupTestHandler() (*handlers.Handler, *auth.Service, *MockDB) {
+	authService, mockDB := setupTestAuth()
+	jwtManager := jwt.NewManager("test-secret")
+	oidcService := oidc.NewService(jwtManager, "http://localhost:8080")
+	handler := handlers.NewHandler(authService, mockDB, oidcService)
+	return handler, authService, mockDB
 }
 
 func TestAuthenticateUser(t *testing.T) {
