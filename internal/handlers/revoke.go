@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -31,7 +32,7 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := h.auth.ValidateClient(clientID, clientSecret)
+	client, err := h.auth.ValidateClient(r.Context(), clientID, clientSecret)
 	if err != nil {
 		h.sendError(w, "invalid_client", "Client authentication failed", http.StatusUnauthorized)
 		return
@@ -41,19 +42,19 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 
 	switch tokenTypeHint {
 	case "refresh_token":
-		revoked = h.tryRevokeRefreshToken(token, client.ClientID)
+		revoked = h.tryRevokeRefreshToken(r.Context(), token, client.ClientID)
 		if !revoked {
-			revoked = h.tryRevokeAccessToken(token, client.ClientID)
+			revoked = h.tryRevokeAccessToken(r.Context(), token, client.ClientID)
 		}
 	case "access_token":
-		revoked = h.tryRevokeAccessToken(token, client.ClientID)
+		revoked = h.tryRevokeAccessToken(r.Context(), token, client.ClientID)
 		if !revoked {
-			revoked = h.tryRevokeRefreshToken(token, client.ClientID)
+			revoked = h.tryRevokeRefreshToken(r.Context(), token, client.ClientID)
 		}
 	default:
-		revoked = h.tryRevokeAccessToken(token, client.ClientID)
+		revoked = h.tryRevokeAccessToken(r.Context(), token, client.ClientID)
 		if !revoked {
-			revoked = h.tryRevokeRefreshToken(token, client.ClientID)
+			revoked = h.tryRevokeRefreshToken(r.Context(), token, client.ClientID)
 		}
 	}
 
@@ -61,8 +62,8 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
 }
 
-func (h *Handler) tryRevokeAccessToken(token, clientID string) bool {
-	accessToken, err := h.db.GetAccessToken(token)
+func (h *Handler) tryRevokeAccessToken(ctx context.Context, token, clientID string) bool {
+	accessToken, err := h.db.GetAccessToken(ctx, token)
 	if err != nil {
 		return false
 	}
@@ -71,12 +72,12 @@ func (h *Handler) tryRevokeAccessToken(token, clientID string) bool {
 		return false
 	}
 
-	err = h.db.RevokeAccessToken(accessToken.ID)
+	err = h.db.RevokeAccessToken(ctx, accessToken.ID)
 	return err == nil
 }
 
-func (h *Handler) tryRevokeRefreshToken(token, clientID string) bool {
-	refreshToken, err := h.db.GetRefreshToken(token)
+func (h *Handler) tryRevokeRefreshToken(ctx context.Context, token, clientID string) bool {
+	refreshToken, err := h.db.GetRefreshToken(ctx, token)
 	if err != nil {
 		return false
 	}
@@ -85,7 +86,7 @@ func (h *Handler) tryRevokeRefreshToken(token, clientID string) bool {
 		return false
 	}
 
-	err = h.db.RevokeRefreshToken(token)
+	err = h.db.RevokeRefreshToken(ctx, token)
 	return err == nil
 }
 
