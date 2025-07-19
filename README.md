@@ -103,10 +103,10 @@ graph LR
 ```mermaid
 graph TB
     subgraph "Token Ecosystem"
-        AT[Access Token<br/>🎫 "API Key"<br/>Short-lived<br/>15 minutes]
-        RT[Refresh Token<br/>🔄 "Renewal Ticket"<br/>Long-lived<br/>7 days]
-        IT[ID Token<br/>👤 "Identity Card"<br/>User info<br/>JWT format]
-        AC[Authorization Code<br/>📝 "Exchange Voucher"<br/>One-time use<br/>10 minutes]
+        AT[Access Token<br/>🎫 API Key<br/>Short-lived<br/>15 minutes]
+        RT[Refresh Token<br/>🔄 Renewal Ticket<br/>Long-lived<br/>7 days]
+        IT[ID Token<br/>👤 Identity Card<br/>User info<br/>JWT format]
+        AC[Authorization Code<br/>📝 Exchange Voucher<br/>One-time use<br/>10 minutes]
     end
     
     AC -->|"exchange for"| AT
