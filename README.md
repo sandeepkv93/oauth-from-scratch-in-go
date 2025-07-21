@@ -1,17 +1,13 @@
 # OAuth 2.0 & OpenID Connect Server Implementation in Go
 
-A comprehensive, production-ready OAuth 2.0 authorization server and OpenID Connect provider built from scratch in Go, implementing multiple RFC standards and security best practices.
-
-## 🎯 Overview
-
-This implementation provides a complete OAuth 2.0 authorization server with OpenID Connect capabilities, supporting all major grant types, advanced security features, and enterprise-grade functionality.
+A comprehensive, production-ready OAuth 2.0 authorization server and OpenID Connect provider built from scratch in Go, implementing multiple RFC standards and security best practices. This implementation provides a complete OAuth 2.0 authorization server with OpenID Connect capabilities, supporting all major grant types, advanced security features, and enterprise-grade functionality.
 
 ## 📋 Table of Contents
 
-- [Features](#-features)
 - [OAuth 2.0 & OpenID Connect Explained](#-oauth-20--openid-connect-explained)
 - [Architecture](#-architecture)
 - [Supported Grant Types](#-supported-grant-types)
+- [Features](#-features)
 - [Installation & Setup](#-installation--setup)
 - [OAuth 2.0 Flow Examples](#-oauth-20-flow-examples)
 - [API Documentation](#-api-documentation)
@@ -20,35 +16,6 @@ This implementation provides a complete OAuth 2.0 authorization server with Open
 - [Testing](#-testing)
 - [Production Deployment](#-production-deployment)
 - [Standards Compliance](#-standards-compliance)
-
-## 🚀 Features
-
-### OAuth 2.0 Grant Types
-- ✅ **Authorization Code Grant** with PKCE (RFC 7636)
-- ✅ **Client Credentials Grant**
-- ✅ **Refresh Token Grant** with rotation
-- ✅ **Resource Owner Password Credentials Grant**
-- ✅ **Implicit Grant** (deprecated but supported)
-- ✅ **Device Authorization Grant** (RFC 8628)
-- ✅ **JWT Bearer Grant** (RFC 7523)
-- ✅ **Token Exchange Grant** (RFC 8693)
-
-### OpenID Connect Features
-- ✅ **ID Token Generation** with standard claims
-- ✅ **UserInfo Endpoint** with scope-based claims
-- ✅ **Discovery Endpoints** (well-known configurations)
-- ✅ **Session Management** with logout flows
-- ✅ **JWKS Endpoint** for public key distribution
-
-### Advanced Features
-- ✅ **Dynamic Client Registration** (RFC 7591)
-- ✅ **Token Introspection** (RFC 7662) & **Revocation** (RFC 7009)
-- ✅ **Hierarchical Scope Management** with consent tracking
-- ✅ **JWT Access Tokens** with configurable algorithms
-- ✅ **Rate Limiting** and **Security Headers**
-- ✅ **PostgreSQL Integration** with connection pooling
-- ✅ **Admin Interface** and **Monitoring** endpoints
-- ✅ **Docker & Kubernetes** deployment support
 
 ## 🔐 OAuth 2.0 & OpenID Connect Explained
 
@@ -313,6 +280,36 @@ sequenceDiagram
     C2->>RS: 6. API Request with New Token
     RS->>C2: 7. Protected Resource
 ```
+
+## 🚀 Features
+
+### OAuth 2.0 Grant Types
+- ✅ **Authorization Code Grant** with PKCE (RFC 7636)
+- ✅ **Client Credentials Grant**
+- ✅ **Refresh Token Grant** with rotation
+- ✅ **Resource Owner Password Credentials Grant**
+- ✅ **Implicit Grant** (deprecated but supported)
+- ✅ **Device Authorization Grant** (RFC 8628)
+- ✅ **JWT Bearer Grant** (RFC 7523)
+- ✅ **Token Exchange Grant** (RFC 8693)
+
+### OpenID Connect Features
+- ✅ **ID Token Generation** with standard claims
+- ✅ **UserInfo Endpoint** with scope-based claims
+- ✅ **Discovery Endpoints** (well-known configurations)
+- ✅ **Session Management** with logout flows
+- ✅ **JWKS Endpoint** for public key distribution
+
+### Advanced Features
+- ✅ **Dynamic Client Registration** (RFC 7591)
+- ✅ **Token Introspection** (RFC 7662) & **Revocation** (RFC 7009)
+- ✅ **Hierarchical Scope Management** with consent tracking
+- ✅ **JWT Access Tokens** with configurable algorithms
+- ✅ **Rate Limiting** and **Security Headers**
+- ✅ **PostgreSQL Integration** with connection pooling
+- ✅ **Admin Interface** and **Monitoring** endpoints
+- ✅ **Docker & Kubernetes** deployment support
+
 
 ## 🛠️ Installation & Setup
 
