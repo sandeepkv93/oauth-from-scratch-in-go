@@ -14,6 +14,7 @@ import (
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
 	"oauth-server/internal/handlers"
+	"oauth-server/internal/logging"
 	"oauth-server/internal/middleware"
 	"oauth-server/internal/monitoring"
 	"oauth-server/internal/oidc"
@@ -50,9 +51,16 @@ func setupIntegrationTest() *IntegrationTestSuite {
 	authService := auth.NewService(mockDatabase, jwtManager, cfg, nil)
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, "http://localhost:8080")
-	
+
+	// Create logger for testing
+	testLogger := logging.New(&logging.Config{
+		Level:  "info",
+		Format: "console",
+		Caller: false,
+	})
+
 	handler := handlers.NewHandler(authService, mockDatabase, oidcService)
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := middleware.NewMiddleware(authService, metricsService, testLogger)
 	
 	router := mux.NewRouter()
 	router.Use(middlewareManager.Logger)

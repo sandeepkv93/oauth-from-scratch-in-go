@@ -8,15 +8,26 @@ import (
 	"time"
 
 	"oauth-server/internal/auth"
+	"oauth-server/internal/logging"
 	"oauth-server/internal/middleware"
 	"oauth-server/internal/monitoring"
 )
+
+// Helper function to create middleware with test logger
+func setupTestMiddleware(authService *auth.Service, metricsService *monitoring.Service) *middleware.Middleware {
+	testLogger := logging.New(&logging.Config{
+		Level:  "error", // Use error level to reduce test output noise
+		Format: "console",
+		Caller: false,
+	})
+	return middleware.NewMiddleware(authService, metricsService, testLogger)
+}
 
 func TestMiddlewareCreation(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
 
-	middleware := middleware.NewMiddleware(authService, metricsService)
+	middleware := setupTestMiddleware(authService, metricsService)
 	if middleware == nil {
 		t.Fatal("Middleware should not be nil")
 	}
@@ -25,7 +36,7 @@ func TestMiddlewareCreation(t *testing.T) {
 func TestLoggerMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -60,7 +71,7 @@ func TestLoggerMiddleware(t *testing.T) {
 func TestCORSMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -92,7 +103,7 @@ func TestCORSMiddleware(t *testing.T) {
 func TestCORSOptionsRequest(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Handler should not be called for OPTIONS request")
@@ -113,7 +124,7 @@ func TestCORSOptionsRequest(t *testing.T) {
 func TestRateLimitMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -152,7 +163,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 func TestRateLimitDifferentIPs(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -182,7 +193,7 @@ func TestRateLimitDifferentIPs(t *testing.T) {
 func TestRequireAuthMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -207,7 +218,7 @@ func TestRequireAuthMiddleware(t *testing.T) {
 func TestRequireAuthWithValidToken(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -243,7 +254,7 @@ func TestRequireAuthWithValidToken(t *testing.T) {
 func TestRequireScopeMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -275,7 +286,7 @@ func TestRequireScopeMiddleware(t *testing.T) {
 func TestRequireScopeInsufficientScope(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	response, err := authService.ClientCredentialsGrant(&auth.TokenRequest{
 		GrantType:    "client_credentials",
@@ -307,7 +318,7 @@ func TestRequireScopeInsufficientScope(t *testing.T) {
 func TestSecurityHeadersMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -343,7 +354,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 func TestPanicRecoveryMiddleware(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("test panic")
@@ -368,7 +379,7 @@ func TestPanicRecoveryMiddleware(t *testing.T) {
 func TestResponseWriterStatusTracking(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -392,7 +403,7 @@ func TestBearerTokenExtraction(t *testing.T) {
 
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -411,7 +422,7 @@ func TestBearerTokenExtraction(t *testing.T) {
 func TestInvalidAuthorizationHeader(t *testing.T) {
 	authService, _ := setupTestAuth()
 	metricsService := monitoring.NewService()
-	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+	middlewareManager := setupTestMiddleware(authService, metricsService)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

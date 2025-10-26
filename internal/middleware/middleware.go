@@ -3,13 +3,13 @@ package middleware
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"oauth-server/internal/auth"
+	"oauth-server/internal/logging"
 	"oauth-server/internal/monitoring"
 	"oauth-server/internal/ratelimit"
 	"oauth-server/internal/security"
@@ -21,12 +21,14 @@ type Middleware struct {
 	metrics     *monitoring.Service
 	rateLimiter ratelimit.RateLimiter
 	csrfManager *security.CSRFManager
+	logger      *logging.Logger
 }
 
-func NewMiddleware(authService *auth.Service, metricsService *monitoring.Service) *Middleware {
+func NewMiddleware(authService *auth.Service, metricsService *monitoring.Service, logger *logging.Logger) *Middleware {
 	return &Middleware{
 		auth:    authService,
 		metrics: metricsService,
+		logger:  logger,
 	}
 }
 
@@ -43,41 +45,93 @@ func (m *Middleware) SetRateLimiter(rateLimiter ratelimit.RateLimiter) {
 func (m *Middleware) Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		
+
+		// Generate request ID
+		requestID := logging.GenerateRequestID()
+
+		// Add request ID to context
+		ctx := logging.WithRequestID(r.Context(), requestID)
+
+		// Create request-scoped logger
+		requestLogger := m.logger.WithRequestID(requestID)
+		ctx = logging.WithLogger(ctx, requestLogger)
+		r = r.WithContext(ctx)
+
+		// Add request ID header to response
+		w.Header().Set("X-Request-ID", requestID)
+
 		m.metrics.IncrementRequests()
 		m.metrics.IncrementActiveRequests()
 		m.metrics.RecordEndpointRequest(r.URL.Path)
-		
+
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(wrapped, r)
-		
+
 		duration := time.Since(start)
 		m.metrics.DecrementActiveRequests()
 		m.metrics.RecordResponseTime(r.URL.Path, duration)
-		
+
 		clientIP := getClientIP(r)
 		userAgent := r.Header.Get("User-Agent")
-		
+
+		// Sanitize user agent
 		sanitizedUserAgent := strings.ReplaceAll(userAgent, "\n", "")
 		sanitizedUserAgent = strings.ReplaceAll(sanitizedUserAgent, "\r", "")
 		if len(sanitizedUserAgent) > 200 {
 			sanitizedUserAgent = sanitizedUserAgent[:200]
 		}
-		
-		log.Printf("[%s] %s %s %d %v %s \"%s\"",
-			start.Format("2006-01-02 15:04:05"),
-			r.Method,
-			r.URL.Path,
-			wrapped.statusCode,
-			duration,
-			clientIP,
-			sanitizedUserAgent,
-		)
-		
-		if wrapped.statusCode >= 400 {
-			log.Printf("[ERROR] %s %s returned %d from %s", r.Method, r.URL.Path, wrapped.statusCode, clientIP)
+
+		// Log request completion with structured fields
+		logEvent := requestLogger.InfoEvent().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Str("client_ip", clientIP).
+			Str("user_agent", sanitizedUserAgent).
+			Int("status", wrapped.statusCode).
+			Dur("duration", duration).
+			Int64("bytes", wrapped.bytesWritten)
+
+		// Add query params if present (excluding sensitive data)
+		if r.URL.RawQuery != "" {
+			logEvent.Str("query", sanitizeQuery(r.URL.RawQuery))
+		}
+
+		logEvent.Msg("request completed")
+
+		// Log errors separately
+		if wrapped.statusCode >= 500 {
+			requestLogger.ErrorEvent().
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Int("status", wrapped.statusCode).
+				Str("client_ip", clientIP).
+				Msg("server error")
+		} else if wrapped.statusCode >= 400 {
+			requestLogger.WarnEvent().
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Int("status", wrapped.statusCode).
+				Str("client_ip", clientIP).
+				Msg("client error")
 		}
 	})
+}
+
+// sanitizeQuery removes sensitive query parameters from logs
+func sanitizeQuery(query string) string {
+	// Remove common sensitive parameters
+	sensitive := []string{"password", "secret", "token", "key", "code"}
+	result := query
+	for _, param := range sensitive {
+		// Simple sanitization - replace value after param=
+		if strings.Contains(strings.ToLower(result), param+"=") {
+			result = strings.ReplaceAll(result, param+"=", param+"=***")
+		}
+	}
+	if len(result) > 200 {
+		result = result[:200] + "..."
+	}
+	return result
 }
 
 func (m *Middleware) CORS(allowedOrigins []string) func(http.Handler) http.Handler {
@@ -129,7 +183,11 @@ func (m *Middleware) RateLimit(maxRequests int, window time.Duration) func(http.
 			// Check rate limit
 			result, err := m.rateLimiter.Allow(clientIP)
 			if err != nil {
-				log.Printf("Rate limit check failed: %v", err)
+				logger := logging.FromContext(r.Context())
+				logger.ErrorEvent().
+					Err(err).
+					Str("client_ip", clientIP).
+					Msg("rate limit check failed, failing open")
 				// Fail open - allow request if rate limiter fails
 				next.ServeHTTP(w, r)
 				return
@@ -225,8 +283,15 @@ func (m *Middleware) PanicRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
+				logger := logging.FromContext(r.Context())
 				clientIP := getClientIP(r)
-				log.Printf("[PANIC] %v | %s %s | Client: %s | User-Agent: %s", err, r.Method, r.URL.Path, clientIP, r.Header.Get("User-Agent"))
+				logger.ErrorEvent().
+					Interface("panic", err).
+					Str("method", r.Method).
+					Str("path", r.URL.Path).
+					Str("client_ip", clientIP).
+					Str("user_agent", r.Header.Get("User-Agent")).
+					Msg("panic recovered")
 				http.Error(w, "Internal server error", http.StatusInternalServerError)
 			}
 		}()
@@ -236,12 +301,19 @@ func (m *Middleware) PanicRecovery(next http.Handler) http.Handler {
 
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode   int
+	bytesWritten int64
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	n, err := rw.ResponseWriter.Write(b)
+	rw.bytesWritten += int64(n)
+	return n, err
 }
 
 func extractBearerToken(r *http.Request) string {
@@ -283,7 +355,7 @@ func (m *Middleware) CSRFProtection(next http.Handler) http.Handler {
 func (m *Middleware) validateCSRFToken(token string) bool {
 	// If CSRF manager not configured, fail closed for security
 	if m.csrfManager == nil {
-		log.Println("WARNING: CSRF validation requested but CSRF manager not configured")
+		m.logger.Warn("CSRF validation requested but CSRF manager not configured")
 		return false
 	}
 
@@ -293,7 +365,9 @@ func (m *Middleware) validateCSRFToken(token string) bool {
 
 	err := m.csrfManager.ValidateToken(token, sessionID)
 	if err != nil {
-		log.Printf("CSRF validation failed: %v", err)
+		m.logger.WarnEvent().
+			Err(err).
+			Msg("CSRF validation failed")
 		return false
 	}
 

@@ -26,6 +26,7 @@ type Config struct {
 	Security    SecurityConfig
 	Redis       RedisConfig
 	Cache       CacheConfig
+	Logging     LoggingConfig
 }
 
 type ServerConfig struct {
@@ -102,6 +103,13 @@ type CacheConfig struct {
 	StatsEnabled    bool          // Enable cache statistics collection
 }
 
+type LoggingConfig struct {
+	Level        string // debug, info, warn, error
+	Format       string // json, console
+	Caller       bool   // Include caller information
+	SamplingRate int    // Sample 1 in N debug messages (0 = no sampling)
+}
+
 func Load() *Config {
 	env := getEnvironment()
 
@@ -175,9 +183,23 @@ func Load() *Config {
 			ClientTTL:    getDurationEnv("CACHE_CLIENT_TTL", 30*time.Minute), // Cache clients for 30 minutes
 			StatsEnabled: getBoolEnv("CACHE_STATS_ENABLED", true),            // Enable stats by default
 		},
+		Logging: LoggingConfig{
+			Level:        getEnv("LOG_LEVEL", "info"),              // info by default
+			Format:       getEnv("LOG_FORMAT", getDefaultLogFormat(env)), // json in prod, console in dev
+			Caller:       getBoolEnv("LOG_CALLER", true),           // Include caller by default
+			SamplingRate: getIntEnv("LOG_SAMPLING_RATE", 0),        // No sampling by default
+		},
 	}
 
 	return cfg
+}
+
+// getDefaultLogFormat returns the default log format based on environment
+func getDefaultLogFormat(env Environment) string {
+	if env == EnvProduction {
+		return "json"
+	}
+	return "console"
 }
 
 func getEnv(key, defaultValue string) string {
@@ -301,6 +323,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Cache.Validate(&c.Redis); err != nil {
 		errs = append(errs, fmt.Errorf("cache config: %w", err))
+	}
+
+	if err := c.Logging.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("logging config: %w", err))
 	}
 
 	if len(errs) > 0 {
@@ -516,6 +542,34 @@ func (c *CacheConfig) Validate(redis *RedisConfig) error {
 
 	if c.ClientTTL <= 0 {
 		return errors.New("cache client TTL must be positive")
+	}
+
+	return nil
+}
+
+// Validate validates Logging configuration
+func (l *LoggingConfig) Validate() error {
+	// Validate log level
+	validLevels := []string{"debug", "info", "warn", "error", "fatal", "panic"}
+	isValid := false
+	for _, level := range validLevels {
+		if l.Level == level {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		return fmt.Errorf("invalid log level: %s (must be one of: debug, info, warn, error, fatal, panic)", l.Level)
+	}
+
+	// Validate log format
+	if l.Format != "json" && l.Format != "console" {
+		return fmt.Errorf("invalid log format: %s (must be 'json' or 'console')", l.Format)
+	}
+
+	// Validate sampling rate
+	if l.SamplingRate < 0 {
+		return errors.New("log sampling rate cannot be negative")
 	}
 
 	return nil
