@@ -17,6 +17,7 @@ import (
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
 	"oauth-server/internal/scopes"
+	"oauth-server/internal/security"
 	"oauth-server/pkg/crypto"
 	jwtpkg "oauth-server/pkg/jwt"
 )
@@ -39,11 +40,12 @@ var (
 )
 
 type Service struct {
-	db       db.DatabaseInterface
-	jwt      *jwtpkg.Manager
-	pkce     *crypto.PKCEManager
-	config   *config.Config
-	scopes   *scopes.Service
+	db           db.DatabaseInterface
+	jwt          *jwtpkg.Manager
+	pkce         *crypto.PKCEManager
+	config       *config.Config
+	scopes       *scopes.Service
+	pwnedChecker *security.PwnedPasswordChecker
 }
 
 type AuthorizeRequest struct {
@@ -115,12 +117,20 @@ type ImplicitGrantResponse struct {
 }
 
 func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *config.Config) *Service {
+	// Create pwned password checker
+	pwnedChecker := security.NewPwnedPasswordChecker(
+		cfg.Security.PwnedPasswordsEnabled,
+		cfg.Security.PwnedPasswordsTimeout,
+		cfg.Security.PwnedPasswordsFailOpen,
+	)
+
 	return &Service{
-		db:     database,
-		jwt:    jwtManager,
-		pkce:   crypto.NewPKCEManager(),
-		config: cfg,
-		scopes: scopes.NewService(database),
+		db:           database,
+		jwt:          jwtManager,
+		pkce:         crypto.NewPKCEManager(),
+		config:       cfg,
+		scopes:       scopes.NewService(database),
+		pwnedChecker: pwnedChecker,
 	}
 }
 
@@ -1092,16 +1102,18 @@ func (s *Service) ValidateAccessToken(token string) (*jwtpkg.Claims, error) {
 }
 
 func (s *Service) ValidatePasswordStrength(password string) error {
+	// Check minimum length
 	minLength := s.config.Security.MinPasswordLength
 	if len(password) < minLength {
 		return fmt.Errorf("password must be at least %d characters long", minLength)
 	}
-	
+
+	// Check character complexity
 	hasUpper := false
 	hasLower := false
 	hasNumber := false
 	hasSpecial := false
-	
+
 	for _, char := range password {
 		switch {
 		case 'A' <= char && char <= 'Z':
@@ -1114,7 +1126,7 @@ func (s *Service) ValidatePasswordStrength(password string) error {
 			hasSpecial = true
 		}
 	}
-	
+
 	if !hasUpper {
 		return errors.New("password must contain at least one uppercase letter")
 	}
@@ -1127,7 +1139,22 @@ func (s *Service) ValidatePasswordStrength(password string) error {
 	if !hasSpecial {
 		return errors.New("password must contain at least one special character")
 	}
-	
+
+	// Check if password has been breached
+	if s.pwnedChecker.IsEnabled() {
+		result := s.pwnedChecker.CheckPassword(password)
+
+		// If there's an error and we're configured to fail closed, return error
+		if result.Error != nil && !s.config.Security.PwnedPasswordsFailOpen {
+			return fmt.Errorf("unable to verify password security: %v", result.Error)
+		}
+
+		// If password is breached, reject it
+		if result.IsBreached {
+			return fmt.Errorf("this password has appeared in %d data breaches and is not secure. Please choose a different password", result.Count)
+		}
+	}
+
 	return nil
 }
 

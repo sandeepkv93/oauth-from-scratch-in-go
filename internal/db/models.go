@@ -9,7 +9,7 @@ import (
 type Client struct {
 	ID           uuid.UUID `json:"id" db:"id"`
 	ClientID     string    `json:"client_id" db:"client_id"`
-	ClientSecret string    `json:"client_secret,omitempty" db:"client_secret"`
+	ClientSecret string    `json:"client_secret,omitempty" db:"client_secret"` // Deprecated: use ClientSecrets table
 	Name         string    `json:"name" db:"name"`
 	RedirectURIs []string  `json:"redirect_uris" db:"redirect_uris"`
 	Scopes       []string  `json:"scopes" db:"scopes"`
@@ -17,7 +17,7 @@ type Client struct {
 	IsPublic     bool      `json:"is_public" db:"is_public"`
 	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
-	
+
 	// Dynamic Client Registration fields (RFC 7591)
 	ClientName              *string    `json:"client_name,omitempty" db:"client_name"`
 	ClientURI               *string    `json:"client_uri,omitempty" db:"client_uri"`
@@ -35,6 +35,20 @@ type Client struct {
 	RegistrationAccessToken *string    `json:"registration_access_token,omitempty" db:"registration_access_token"`
 	RegistrationClientURI   *string    `json:"registration_client_uri,omitempty" db:"registration_client_uri"`
 	ClientIDIssuedAt        *time.Time `json:"client_id_issued_at,omitempty" db:"client_id_issued_at"`
+}
+
+// ClientSecret represents a client secret with rotation support
+type ClientSecret struct {
+	ID         uuid.UUID  `json:"id" db:"id"`
+	ClientID   uuid.UUID  `json:"client_id" db:"client_id"`      // References clients.id
+	SecretHash string     `json:"-" db:"secret_hash"`             // bcrypt hash, never exposed
+	PlainText  string     `json:"client_secret,omitempty" db:"-"` // Only set immediately after creation
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty" db:"expires_at"`
+	RotatedAt  *time.Time `json:"rotated_at,omitempty" db:"rotated_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+	IsPrimary  bool       `json:"is_primary" db:"is_primary"`
+	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type User struct {

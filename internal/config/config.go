@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -8,11 +10,21 @@ import (
 	"time"
 )
 
+type Environment string
+
+const (
+	EnvDevelopment Environment = "development"
+	EnvStaging     Environment = "staging"
+	EnvProduction  Environment = "production"
+)
+
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Auth     AuthConfig
-	Security SecurityConfig
+	Environment Environment
+	Server      ServerConfig
+	Database    DatabaseConfig
+	Auth        AuthConfig
+	Security    SecurityConfig
+	Redis       RedisConfig
 }
 
 type ServerConfig struct {
@@ -48,19 +60,36 @@ type AuthConfig struct {
 }
 
 type SecurityConfig struct {
-	RateLimitRequests   int
-	RateLimitWindow     time.Duration
-	AllowedOrigins      []string
-	BlockedIPs          []string
-	MaxRequestSize      int64
-	EnableCSRF          bool
-	MinPasswordLength   int
-	RequireHTTPS        bool
-	JWTRotationInterval time.Duration
+	RateLimitRequests      int
+	RateLimitWindow        time.Duration
+	RateLimitBackend       string // "memory" or "redis"
+	AllowedOrigins         []string
+	BlockedIPs             []string
+	MaxRequestSize         int64
+	EnableCSRF             bool
+	CSRFSecret             string
+	MinPasswordLength      int
+	RequireHTTPS           bool
+	JWTRotationInterval    time.Duration
+	PwnedPasswordsEnabled  bool
+	PwnedPasswordsTimeout  time.Duration
+	PwnedPasswordsFailOpen bool // If true, allow password on API errors
+}
+
+type RedisConfig struct {
+	Enabled  bool
+	Host     string
+	Port     string
+	Password string
+	DB       int
+	PoolSize int
 }
 
 func Load() *Config {
-	return &Config{
+	env := getEnvironment()
+
+	cfg := &Config{
+		Environment: env,
 		Server: ServerConfig{
 			Host:         getEnv("SERVER_HOST", "localhost"),
 			Port:         getEnv("SERVER_PORT", "8080"),
@@ -85,23 +114,38 @@ func Load() *Config {
 			QueryTimeout:    getDurationEnv("DB_QUERY_TIMEOUT", 30*time.Second),
 		},
 		Auth: AuthConfig{
-			JWTSecret:           getEnv("JWT_SECRET", generateRandomSecret()),
-			AccessTokenTTL:      getDurationEnv("ACCESS_TOKEN_TTL", 15*time.Minute),
-			RefreshTokenTTL:     getDurationEnv("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+			JWTSecret:            loadJWTSecret(env),
+			AccessTokenTTL:       getDurationEnv("ACCESS_TOKEN_TTL", 15*time.Minute),
+			RefreshTokenTTL:      getDurationEnv("REFRESH_TOKEN_TTL", 7*24*time.Hour),
 			AuthorizationCodeTTL: getDurationEnv("AUTH_CODE_TTL", 10*time.Minute),
 		},
 		Security: SecurityConfig{
-			RateLimitRequests:   getIntEnv("RATE_LIMIT_REQUESTS", 100),
-			RateLimitWindow:     getDurationEnv("RATE_LIMIT_WINDOW", time.Minute),
-			AllowedOrigins:      parseStringArray(getEnv("ALLOWED_ORIGINS", "*")),
-			BlockedIPs:          parseStringArray(getEnv("BLOCKED_IPS", "")),
-			MaxRequestSize:      getInt64Env("MAX_REQUEST_SIZE", 1024*1024),
-			EnableCSRF:          getBoolEnv("ENABLE_CSRF", false),
-			MinPasswordLength:   getIntEnv("MIN_PASSWORD_LENGTH", 8),
-			RequireHTTPS:        getBoolEnv("REQUIRE_HTTPS", false),
-			JWTRotationInterval: getDurationEnv("JWT_ROTATION_INTERVAL", 24*time.Hour),
+			RateLimitRequests:      getIntEnv("RATE_LIMIT_REQUESTS", 100),
+			RateLimitWindow:        getDurationEnv("RATE_LIMIT_WINDOW", time.Minute),
+			RateLimitBackend:       getEnv("RATE_LIMIT_BACKEND", "memory"),
+			AllowedOrigins:         parseStringArray(getEnv("ALLOWED_ORIGINS", "*")),
+			BlockedIPs:             parseStringArray(getEnv("BLOCKED_IPS", "")),
+			MaxRequestSize:         getInt64Env("MAX_REQUEST_SIZE", 1024*1024),
+			EnableCSRF:             getBoolEnv("ENABLE_CSRF", false),
+			CSRFSecret:             getEnv("CSRF_SECRET", ""),
+			MinPasswordLength:      getIntEnv("MIN_PASSWORD_LENGTH", 8),
+			RequireHTTPS:           getBoolEnv("REQUIRE_HTTPS", false),
+			JWTRotationInterval:    getDurationEnv("JWT_ROTATION_INTERVAL", 24*time.Hour),
+			PwnedPasswordsEnabled:  getBoolEnv("PWNED_PASSWORDS_ENABLED", true), // Enabled by default for security
+			PwnedPasswordsTimeout:  getDurationEnv("PWNED_PASSWORDS_TIMEOUT", 5*time.Second),
+			PwnedPasswordsFailOpen: getBoolEnv("PWNED_PASSWORDS_FAIL_OPEN", true), // Fail open by default
+		},
+		Redis: RedisConfig{
+			Enabled:  getBoolEnv("REDIS_ENABLED", false),
+			Host:     getEnv("REDIS_HOST", "localhost"),
+			Port:     getEnv("REDIS_PORT", "6379"),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       getIntEnv("REDIS_DB", 0),
+			PoolSize: getIntEnv("REDIS_POOL_SIZE", 10),
 		},
 	}
+
+	return cfg
 }
 
 func getEnv(key, defaultValue string) string {
@@ -157,11 +201,259 @@ func parseStringArray(value string) []string {
 	return strings.Split(value, ",")
 }
 
-func generateRandomSecret() string {
-	if secret := os.Getenv("JWT_SECRET"); secret != "" {
-		return secret
+func getEnvironment() Environment {
+	env := strings.ToLower(os.Getenv("ENVIRONMENT"))
+	switch env {
+	case "production", "prod":
+		return EnvProduction
+	case "staging", "stage":
+		return EnvStaging
+	case "development", "dev":
+		return EnvDevelopment
+	default:
+		// Default to development if not specified
+		return EnvDevelopment
 	}
-	
-	log.Println("WARNING: JWT_SECRET not set, using default. Set JWT_SECRET environment variable in production!")
-	return "your-very-secure-secret-key-change-this-in-production"
+}
+
+func loadJWTSecret(env Environment) string {
+	secret := os.Getenv("JWT_SECRET")
+
+	// In production, JWT_SECRET is required
+	if env == EnvProduction && secret == "" {
+		log.Fatal("FATAL: JWT_SECRET environment variable must be set in production environment")
+	}
+
+	// Check for insecure default values in production
+	if env == EnvProduction && secret == "your-very-secure-secret-key-change-this-in-production" {
+		log.Fatal("FATAL: Default JWT_SECRET detected in production environment")
+	}
+
+	// Warn if secret is too short in production
+	if env == EnvProduction && len(secret) < 32 {
+		log.Fatal("FATAL: JWT_SECRET must be at least 32 characters in production environment")
+	}
+
+	// In development/staging, use default if not set
+	if secret == "" {
+		log.Println("WARNING: JWT_SECRET not set, using default. This is only acceptable in development!")
+		return "dev-secret-change-this-in-production-environments"
+	}
+
+	return secret
+}
+
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	var errs []error
+
+	if err := c.Server.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("server config: %w", err))
+	}
+
+	if err := c.Database.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("database config: %w", err))
+	}
+
+	if err := c.Auth.Validate(c.Environment); err != nil {
+		errs = append(errs, fmt.Errorf("auth config: %w", err))
+	}
+
+	if err := c.Security.Validate(c.Environment); err != nil {
+		errs = append(errs, fmt.Errorf("security config: %w", err))
+	}
+
+	if err := c.Redis.Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("redis config: %w", err))
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	return nil
+}
+
+// Validate validates server configuration
+func (s *ServerConfig) Validate() error {
+	// Validate port number
+	port, err := strconv.Atoi(s.Port)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid port number: %s (must be 1-65535)", s.Port)
+	}
+
+	// If TLS cert is specified, key must also be specified
+	if s.TLSCert != "" && s.TLSKey == "" {
+		return errors.New("TLS certificate specified but TLS key is missing")
+	}
+
+	if s.TLSKey != "" && s.TLSCert == "" {
+		return errors.New("TLS key specified but TLS certificate is missing")
+	}
+
+	// Verify TLS files exist if specified
+	if s.TLSCert != "" {
+		if _, err := os.Stat(s.TLSCert); os.IsNotExist(err) {
+			return fmt.Errorf("TLS certificate file not found: %s", s.TLSCert)
+		}
+	}
+
+	if s.TLSKey != "" {
+		if _, err := os.Stat(s.TLSKey); os.IsNotExist(err) {
+			return fmt.Errorf("TLS key file not found: %s", s.TLSKey)
+		}
+	}
+
+	// Validate timeouts are positive
+	if s.ReadTimeout <= 0 {
+		return errors.New("read timeout must be positive")
+	}
+
+	if s.WriteTimeout <= 0 {
+		return errors.New("write timeout must be positive")
+	}
+
+	if s.IdleTimeout <= 0 {
+		return errors.New("idle timeout must be positive")
+	}
+
+	return nil
+}
+
+// Validate validates database configuration
+func (d *DatabaseConfig) Validate() error {
+	if d.Host == "" {
+		return errors.New("database host is required")
+	}
+
+	if d.Name == "" {
+		return errors.New("database name is required")
+	}
+
+	if d.User == "" {
+		return errors.New("database user is required")
+	}
+
+	// Validate port number
+	port, err := strconv.Atoi(d.Port)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid database port: %s (must be 1-65535)", d.Port)
+	}
+
+	// Validate connection pool settings
+	if d.MaxOpenConns < 1 {
+		return errors.New("max_open_conns must be at least 1")
+	}
+
+	if d.MaxIdleConns < 0 {
+		return errors.New("max_idle_conns cannot be negative")
+	}
+
+	if d.MaxIdleConns > d.MaxOpenConns {
+		return errors.New("max_idle_conns cannot exceed max_open_conns")
+	}
+
+	if d.ConnMaxLifetime < 0 {
+		return errors.New("conn_max_lifetime cannot be negative")
+	}
+
+	if d.QueryTimeout <= 0 {
+		return errors.New("query timeout must be positive")
+	}
+
+	return nil
+}
+
+// Validate validates auth configuration
+func (a *AuthConfig) Validate(env Environment) error {
+	if a.JWTSecret == "" {
+		return errors.New("JWT secret is required")
+	}
+
+	// Enforce minimum secret length in production
+	if env == EnvProduction && len(a.JWTSecret) < 32 {
+		return errors.New("JWT secret must be at least 32 characters in production")
+	}
+
+	if a.AccessTokenTTL <= 0 {
+		return errors.New("access token TTL must be positive")
+	}
+
+	if a.RefreshTokenTTL <= 0 {
+		return errors.New("refresh token TTL must be positive")
+	}
+
+	if a.AuthorizationCodeTTL <= 0 {
+		return errors.New("authorization code TTL must be positive")
+	}
+
+	// Refresh token should be longer than access token
+	if a.RefreshTokenTTL <= a.AccessTokenTTL {
+		return errors.New("refresh token TTL must be greater than access token TTL")
+	}
+
+	return nil
+}
+
+// Validate validates security configuration
+func (s *SecurityConfig) Validate(env Environment) error {
+	if s.RateLimitRequests <= 0 {
+		return errors.New("rate limit requests must be positive")
+	}
+
+	if s.RateLimitWindow <= 0 {
+		return errors.New("rate limit window must be positive")
+	}
+
+	if s.MaxRequestSize <= 0 {
+		return errors.New("max request size must be positive")
+	}
+
+	if s.MinPasswordLength < 8 {
+		return errors.New("minimum password length must be at least 8")
+	}
+
+	// Validate CSRF secret if CSRF is enabled
+	if s.EnableCSRF && s.CSRFSecret == "" {
+		return errors.New("CSRF secret is required when CSRF protection is enabled")
+	}
+
+	// Validate rate limit backend
+	if s.RateLimitBackend != "memory" && s.RateLimitBackend != "redis" {
+		return fmt.Errorf("rate_limit_backend must be 'memory' or 'redis', got: %s", s.RateLimitBackend)
+	}
+
+	// Recommend HTTPS in production
+	if env == EnvProduction && !s.RequireHTTPS {
+		log.Println("WARNING: REQUIRE_HTTPS is false in production environment - this is insecure!")
+	}
+
+	return nil
+}
+
+// Validate validates Redis configuration
+func (r *RedisConfig) Validate() error {
+	if !r.Enabled {
+		return nil // Skip validation if Redis is disabled
+	}
+
+	if r.Host == "" {
+		return errors.New("redis host is required when Redis is enabled")
+	}
+
+	// Validate port number
+	port, err := strconv.Atoi(r.Port)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid redis port: %s (must be 1-65535)", r.Port)
+	}
+
+	if r.DB < 0 || r.DB > 15 {
+		return fmt.Errorf("invalid redis DB: %d (must be 0-15)", r.DB)
+	}
+
+	if r.PoolSize < 1 {
+		return errors.New("redis pool size must be at least 1")
+	}
+
+	return nil
 }

@@ -319,5 +319,59 @@ func GetAllMigrations() []Migration {
 				DROP INDEX IF EXISTS idx_device_codes_pending;
 			`,
 		},
+		{
+			Version: 4,
+			Name:    "add_client_secret_rotation",
+			UpScript: `
+				-- Create client_secrets table for secret rotation support
+				CREATE TABLE IF NOT EXISTS client_secrets (
+					id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+					client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+					secret_hash TEXT NOT NULL,
+					created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+					expires_at TIMESTAMP,
+					rotated_at TIMESTAMP,
+					revoked_at TIMESTAMP,
+					is_primary BOOLEAN NOT NULL DEFAULT false,
+					updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+				);
+
+				-- Create indexes for efficient secret lookups
+				CREATE INDEX IF NOT EXISTS idx_client_secrets_client_id ON client_secrets(client_id);
+				CREATE INDEX IF NOT EXISTS idx_client_secrets_expires_at ON client_secrets(expires_at);
+				CREATE INDEX IF NOT EXISTS idx_client_secrets_primary ON client_secrets(client_id, is_primary) WHERE is_primary = true;
+				CREATE INDEX IF NOT EXISTS idx_client_secrets_active ON client_secrets(client_id) WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW());
+
+				-- Migrate existing client secrets to the new table
+				-- This ensures backward compatibility
+				INSERT INTO client_secrets (client_id, secret_hash, is_primary, created_at, updated_at)
+				SELECT id, client_secret, true, created_at, updated_at
+				FROM clients
+				WHERE client_secret IS NOT NULL AND client_secret != '';
+
+				-- Add trigger to update updated_at timestamp
+				CREATE OR REPLACE FUNCTION update_client_secrets_updated_at()
+				RETURNS TRIGGER AS $$
+				BEGIN
+					NEW.updated_at = NOW();
+					RETURN NEW;
+				END;
+				$$ LANGUAGE plpgsql;
+
+				CREATE TRIGGER trigger_update_client_secrets_updated_at
+					BEFORE UPDATE ON client_secrets
+					FOR EACH ROW
+					EXECUTE FUNCTION update_client_secrets_updated_at();
+			`,
+			DownScript: `
+				DROP TRIGGER IF EXISTS trigger_update_client_secrets_updated_at ON client_secrets;
+				DROP FUNCTION IF EXISTS update_client_secrets_updated_at();
+				DROP INDEX IF EXISTS idx_client_secrets_active;
+				DROP INDEX IF EXISTS idx_client_secrets_primary;
+				DROP INDEX IF EXISTS idx_client_secrets_expires_at;
+				DROP INDEX IF EXISTS idx_client_secrets_client_id;
+				DROP TABLE IF EXISTS client_secrets;
+			`,
+		},
 	}
 }

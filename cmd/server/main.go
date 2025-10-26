@@ -19,14 +19,25 @@ import (
 	"oauth-server/internal/middleware"
 	"oauth-server/internal/monitoring"
 	"oauth-server/internal/oidc"
+	"oauth-server/internal/ratelimit"
 	"oauth-server/internal/scopes"
+	"oauth-server/internal/security"
 	"oauth-server/pkg/jwt"
 	"oauth-server/pkg/jwks"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	cfg := config.Load()
-	
+
+	// Validate configuration before starting server
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed: %v", err)
+	}
+
+	log.Printf("Starting OAuth server in %s environment", cfg.Environment)
+
 	database, err := db.NewDatabase(&cfg.Database)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -84,6 +95,58 @@ func main() {
 	
 	handler := handlers.NewHandler(authService, database, oidcService, dcrService, adminService)
 	middlewareManager := middleware.NewMiddleware(authService, metricsService)
+
+	// Setup CSRF protection if enabled
+	if cfg.Security.EnableCSRF {
+		if cfg.Security.CSRFSecret == "" {
+			log.Fatal("CSRF enabled but CSRF_SECRET not set")
+		}
+		csrfManager := security.NewCSRFManager(cfg.Security.CSRFSecret, 24*time.Hour)
+		middlewareManager.SetCSRFManager(csrfManager)
+		log.Println("CSRF protection enabled")
+	}
+
+	// Setup rate limiter based on configuration
+	var rateLimiter ratelimit.RateLimiter
+	rateLimitConfig := &ratelimit.Config{
+		MaxRequests: cfg.Security.RateLimitRequests,
+		Window:      cfg.Security.RateLimitWindow,
+	}
+
+	switch cfg.Security.RateLimitBackend {
+	case "redis":
+		if !cfg.Redis.Enabled {
+			log.Fatal("Rate limit backend set to 'redis' but Redis is not enabled")
+		}
+
+		// Create Redis client
+		redisClient := redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Host + ":" + cfg.Redis.Port,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+			PoolSize: cfg.Redis.PoolSize,
+		})
+
+		// Test connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			log.Fatalf("Failed to connect to Redis: %v", err)
+		}
+
+		rateLimiter = ratelimit.NewRedisRateLimiter(redisClient, rateLimitConfig)
+		log.Printf("Using Redis rate limiter (host: %s:%s)", cfg.Redis.Host, cfg.Redis.Port)
+
+	case "memory":
+		rateLimiter = ratelimit.NewMemoryRateLimiter(rateLimitConfig)
+		log.Println("Using in-memory rate limiter (not suitable for distributed deployments)")
+
+	default:
+		log.Fatalf("Invalid rate limit backend: %s (must be 'memory' or 'redis')", cfg.Security.RateLimitBackend)
+	}
+
+	middlewareManager.SetRateLimiter(rateLimiter)
+	defer rateLimiter.Close()
 	
 	router := mux.NewRouter()
 	

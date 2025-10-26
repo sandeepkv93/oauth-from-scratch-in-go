@@ -7,34 +7,37 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"oauth-server/internal/auth"
 	"oauth-server/internal/monitoring"
+	"oauth-server/internal/ratelimit"
+	"oauth-server/internal/security"
 	"oauth-server/pkg/jwt"
 )
 
 type Middleware struct {
-	auth       *auth.Service
-	metrics    *monitoring.Service
-	rateLimits map[string]*rateLimiter
-	mutex      sync.RWMutex
-}
-
-type rateLimiter struct {
-	requests  int
-	window    time.Time
-	maxReqs   int
-	windowDur time.Duration
+	auth        *auth.Service
+	metrics     *monitoring.Service
+	rateLimiter ratelimit.RateLimiter
+	csrfManager *security.CSRFManager
 }
 
 func NewMiddleware(authService *auth.Service, metricsService *monitoring.Service) *Middleware {
 	return &Middleware{
-		auth:       authService,
-		metrics:    metricsService,
-		rateLimits: make(map[string]*rateLimiter),
+		auth:    authService,
+		metrics: metricsService,
 	}
+}
+
+// SetCSRFManager sets the CSRF manager for the middleware
+func (m *Middleware) SetCSRFManager(csrfManager *security.CSRFManager) {
+	m.csrfManager = csrfManager
+}
+
+// SetRateLimiter sets the rate limiter for the middleware
+func (m *Middleware) SetRateLimiter(rateLimiter ratelimit.RateLimiter) {
+	m.rateLimiter = rateLimiter
 }
 
 func (m *Middleware) Logger(next http.Handler) http.Handler {
@@ -115,42 +118,39 @@ func (m *Middleware) CORS(allowedOrigins []string) func(http.Handler) http.Handl
 func (m *Middleware) RateLimit(maxRequests int, window time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// If no rate limiter configured, skip
+			if m.rateLimiter == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			clientIP := getClientIP(r)
-			
-			m.mutex.Lock()
-			limiter, exists := m.rateLimits[clientIP]
-			if !exists {
-				limiter = &rateLimiter{
-					requests:  0,
-					window:    time.Now(),
-					maxReqs:   maxRequests,
-					windowDur: window,
+
+			// Check rate limit
+			result, err := m.rateLimiter.Allow(clientIP)
+			if err != nil {
+				log.Printf("Rate limit check failed: %v", err)
+				// Fail open - allow request if rate limiter fails
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Set rate limit headers
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetTime.Unix()))
+
+			// Check if allowed
+			if !result.Allowed {
+				retryAfter := int(result.ResetTime.Sub(time.Now()).Seconds())
+				if retryAfter < 0 {
+					retryAfter = 0
 				}
-				m.rateLimits[clientIP] = limiter
-			}
-			
-			now := time.Now()
-			if now.Sub(limiter.window) > limiter.windowDur {
-				limiter.requests = 0
-				limiter.window = now
-			}
-			
-			if limiter.requests >= limiter.maxReqs {
-				m.mutex.Unlock()
-				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", window.Seconds()))
-				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
-				w.Header().Set("X-RateLimit-Remaining", "0")
-				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", limiter.window.Add(window).Unix()))
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
-			
-			limiter.requests++
-			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", maxRequests))
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", maxRequests-limiter.requests))
-			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", limiter.window.Add(window).Unix()))
-			m.mutex.Unlock()
-			
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -281,6 +281,22 @@ func (m *Middleware) CSRFProtection(next http.Handler) http.Handler {
 }
 
 func (m *Middleware) validateCSRFToken(token string) bool {
+	// If CSRF manager not configured, fail closed for security
+	if m.csrfManager == nil {
+		log.Println("WARNING: CSRF validation requested but CSRF manager not configured")
+		return false
+	}
+
+	// Extract session ID from context or use a default
+	// In a real implementation, this would come from the session
+	sessionID := "default-session" // TODO: Extract from actual session
+
+	err := m.csrfManager.ValidateToken(token, sessionID)
+	if err != nil {
+		log.Printf("CSRF validation failed: %v", err)
+		return false
+	}
+
 	return true
 }
 
@@ -301,21 +317,44 @@ func (m *Middleware) RequestSizeLimit(maxSize int64) func(http.Handler) http.Han
 func (m *Middleware) SecurityHeadersEnhanced(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-		
+
+		// Get security policy for this endpoint
+		policy := security.GetSecurityPolicy(r.URL.Path)
+
+		// Standard security headers
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Frame-Options", policy.FrameOptions)
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
-		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'")
-		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()")
-		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
-		
+		w.Header().Set("Referrer-Policy", security.GetReferrerPolicy())
+		w.Header().Set("Permissions-Policy", security.GetPermissionsPolicy())
+
+		// Cache control based on endpoint policy
+		w.Header().Set("Cache-Control", policy.CacheControl)
+		if !strings.Contains(policy.CacheControl, "public") {
+			// Only set these for private content
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
+
+		// Content Security Policy with optional nonce
+		csp := policy.CSP
+		if policy.AllowInlineScripts {
+			// Generate CSP nonce for inline scripts
+			nonce, err := security.GenerateCSPNonce()
+			if err == nil {
+				csp = security.ApplyCSPNonce(csp, nonce)
+				// Store nonce in context for templates to use
+				ctx := context.WithValue(r.Context(), "csp-nonce", nonce)
+				r = r.WithContext(ctx)
+			}
+		}
+		w.Header().Set("Content-Security-Policy", csp)
+
+		// HSTS only on HTTPS connections
 		if isHTTPS {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }

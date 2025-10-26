@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"oauth-server/internal/db"
 	"oauth-server/internal/dcr"
 	"oauth-server/internal/oidc"
+	"oauth-server/internal/security"
 )
 
 type Handler struct {
@@ -55,18 +57,21 @@ func (h *Handler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/logout", h.Logout).Methods("GET", "POST")
 	r.HandleFunc("/session/check", h.CheckSession).Methods("GET")
 	r.HandleFunc("/session/iframe", h.SessionIframe).Methods("GET")
-	
+
+	// CSP violation reporting
+	r.HandleFunc("/csp-report", h.CSPReport).Methods("POST")
+
 	// Dynamic Client Registration endpoints (RFC 7591)
 	r.HandleFunc("/register", h.RegisterClient).Methods("POST")
 	r.HandleFunc("/register/{client_id}", h.GetClient).Methods("GET")
 	r.HandleFunc("/register/{client_id}", h.UpdateClient).Methods("PUT")
 	r.HandleFunc("/register/{client_id}", h.DeleteClient).Methods("DELETE")
-	
+
 	apiRouter := r.PathPrefix("/api").Subrouter()
 	apiRouter.HandleFunc("/clients", h.CreateClient).Methods("POST")
 	apiRouter.HandleFunc("/clients", h.ListClients).Methods("GET")
 	apiRouter.HandleFunc("/users", h.CreateUser).Methods("POST")
-	
+
 	// Admin interface routes
 	if h.admin != nil {
 		h.admin.RegisterRoutes(r)
@@ -1483,3 +1488,29 @@ func (h *Handler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+
+// CSPReport handles Content Security Policy violation reports
+func (h *Handler) CSPReport(w http.ResponseWriter, r *http.Request) {
+	var report security.CSPReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		log.Printf("Failed to parse CSP report: %v", err)
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Log the CSP violation
+	log.Printf("[CSP VIOLATION] Document: %s, Blocked: %s, Directive: %s, Source: %s:%d",
+		report.Document.URL,
+		report.Violation.BlockedURI,
+		report.Violation.EffectiveDirective,
+		report.Violation.SourceFile,
+		report.Violation.LineNumber)
+
+	// In production, you might want to:
+	// - Store violations in database for analysis
+	// - Send alerts for repeated violations
+	// - Track violation patterns
+	// - Generate metrics
+
+	w.WriteHeader(http.StatusNoContent)
+}
