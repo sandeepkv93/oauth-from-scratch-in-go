@@ -25,6 +25,7 @@ type Config struct {
 	Auth        AuthConfig
 	Security    SecurityConfig
 	Redis       RedisConfig
+	Cache       CacheConfig
 }
 
 type ServerConfig struct {
@@ -93,6 +94,14 @@ type RedisConfig struct {
 	PoolSize int
 }
 
+type CacheConfig struct {
+	Enabled         bool
+	TokenTTL        time.Duration // How long to cache valid tokens
+	UserTTL         time.Duration // How long to cache user data
+	ClientTTL       time.Duration // How long to cache client data
+	StatsEnabled    bool          // Enable cache statistics collection
+}
+
 func Load() *Config {
 	env := getEnvironment()
 
@@ -158,6 +167,13 @@ func Load() *Config {
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getIntEnv("REDIS_DB", 0),
 			PoolSize: getIntEnv("REDIS_POOL_SIZE", 10),
+		},
+		Cache: CacheConfig{
+			Enabled:      getBoolEnv("CACHE_ENABLED", false), // Disabled by default, requires Redis
+			TokenTTL:     getDurationEnv("CACHE_TOKEN_TTL", 5*time.Minute),  // Cache tokens for 5 minutes
+			UserTTL:      getDurationEnv("CACHE_USER_TTL", 15*time.Minute),  // Cache users for 15 minutes
+			ClientTTL:    getDurationEnv("CACHE_CLIENT_TTL", 30*time.Minute), // Cache clients for 30 minutes
+			StatsEnabled: getBoolEnv("CACHE_STATS_ENABLED", true),            // Enable stats by default
 		},
 	}
 
@@ -281,6 +297,10 @@ func (c *Config) Validate() error {
 
 	if err := c.Redis.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("redis config: %w", err))
+	}
+
+	if err := c.Cache.Validate(&c.Redis); err != nil {
+		errs = append(errs, fmt.Errorf("cache config: %w", err))
 	}
 
 	if len(errs) > 0 {
@@ -469,6 +489,33 @@ func (r *RedisConfig) Validate() error {
 
 	if r.PoolSize < 1 {
 		return errors.New("redis pool size must be at least 1")
+	}
+
+	return nil
+}
+
+// Validate validates Cache configuration
+func (c *CacheConfig) Validate(redis *RedisConfig) error {
+	if !c.Enabled {
+		return nil // Skip validation if cache is disabled
+	}
+
+	// Cache requires Redis to be enabled
+	if !redis.Enabled {
+		return errors.New("cache requires Redis to be enabled (set REDIS_ENABLED=true)")
+	}
+
+	// Validate TTL values are positive
+	if c.TokenTTL <= 0 {
+		return errors.New("cache token TTL must be positive")
+	}
+
+	if c.UserTTL <= 0 {
+		return errors.New("cache user TTL must be positive")
+	}
+
+	if c.ClientTTL <= 0 {
+		return errors.New("cache client TTL must be positive")
 	}
 
 	return nil

@@ -47,7 +47,7 @@ func setupIntegrationTest() *IntegrationTestSuite {
 	}
 
 	jwtManager := jwt.NewManager(cfg.Auth.JWTSecret)
-	authService := auth.NewService(mockDatabase, jwtManager, cfg)
+	authService := auth.NewService(mockDatabase, jwtManager, cfg, nil)
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, "http://localhost:8080")
 	

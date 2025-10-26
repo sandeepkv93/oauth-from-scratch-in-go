@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"oauth-server/internal/admin"
 	"oauth-server/internal/auth"
+	"oauth-server/internal/cache"
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
 	"oauth-server/internal/dcr"
@@ -69,8 +70,37 @@ func main() {
 		jwtManager = jwt.NewManager(cfg.Auth.JWTSecret)
 		log.Println("Using symmetric JWT signing (HS256)")
 	}
-	
-	authService := auth.NewService(database, jwtManager, cfg)
+
+	// Initialize Redis client if enabled (shared for cache and rate limiting)
+	var redisClient *redis.Client
+	if cfg.Redis.Enabled {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Host + ":" + cfg.Redis.Port,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+			PoolSize: cfg.Redis.PoolSize,
+		})
+
+		// Test connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			log.Fatalf("Failed to connect to Redis: %v", err)
+		}
+		log.Printf("Connected to Redis (host: %s:%s)", cfg.Redis.Host, cfg.Redis.Port)
+	}
+
+	// Initialize cache if enabled
+	var cacheService cache.Cache
+	if cfg.Cache.Enabled {
+		if redisClient == nil {
+			log.Fatal("Cache enabled but Redis is not enabled")
+		}
+		cacheService = cache.NewRedisCache(redisClient)
+		log.Println("Cache enabled with Redis backend")
+	}
+
+	authService := auth.NewService(database, jwtManager, cfg, cacheService)
 	metricsService := monitoring.NewService()
 	oidcService := oidc.NewService(jwtManager, baseURL)
 	
@@ -115,27 +145,12 @@ func main() {
 
 	switch cfg.Security.RateLimitBackend {
 	case "redis":
-		if !cfg.Redis.Enabled {
+		if redisClient == nil {
 			log.Fatal("Rate limit backend set to 'redis' but Redis is not enabled")
 		}
 
-		// Create Redis client
-		redisClient := redis.NewClient(&redis.Options{
-			Addr:     cfg.Redis.Host + ":" + cfg.Redis.Port,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-			PoolSize: cfg.Redis.PoolSize,
-		})
-
-		// Test connection
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := redisClient.Ping(ctx).Err(); err != nil {
-			log.Fatalf("Failed to connect to Redis: %v", err)
-		}
-
 		rateLimiter = ratelimit.NewRedisRateLimiter(redisClient, rateLimitConfig)
-		log.Printf("Using Redis rate limiter (host: %s:%s)", cfg.Redis.Host, cfg.Redis.Port)
+		log.Println("Using Redis rate limiter")
 
 	case "memory":
 		rateLimiter = ratelimit.NewMemoryRateLimiter(rateLimitConfig)

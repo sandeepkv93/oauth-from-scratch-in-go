@@ -430,8 +430,8 @@ func SetupTestAuth() (*auth.Service, *MockDB) {
 	}
 
 	jwtManager := jwt.NewManager(cfg.Auth.JWTSecret)
-	authService := auth.NewService(mockDatabase, jwtManager, cfg)
-	
+	authService := auth.NewService(mockDatabase, jwtManager, cfg, nil)
+
 	// Initialize default scopes for testing
 	err := authService.InitializeDefaultScopes(context.Background())
 	if err != nil {

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"oauth-server/internal/cache"
 	"oauth-server/internal/config"
 	"oauth-server/internal/db"
 	"oauth-server/internal/scopes"
@@ -47,6 +49,7 @@ type Service struct {
 	scopes        *scopes.Service
 	pwnedChecker  *security.PwnedPasswordChecker
 	secretManager *security.ClientSecretManager
+	cache         cache.Cache
 }
 
 type AuthorizeRequest struct {
@@ -117,7 +120,7 @@ type ImplicitGrantResponse struct {
 	Nonce           string `json:"-"` // Internal field
 }
 
-func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *config.Config) *Service {
+func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *config.Config, cacheService cache.Cache) *Service {
 	// Create pwned password checker
 	pwnedChecker := security.NewPwnedPasswordChecker(
 		cfg.Security.PwnedPasswordsEnabled,
@@ -136,6 +139,7 @@ func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *
 		scopes:        scopes.NewService(database),
 		pwnedChecker:  pwnedChecker,
 		secretManager: secretManager,
+		cache:         cacheService,
 	}
 }
 
@@ -1118,7 +1122,93 @@ func (s *Service) hasGrantType(client *db.Client, grantType string) bool {
 }
 
 func (s *Service) ValidateAccessToken(token string) (*jwtpkg.Claims, error) {
-	return s.jwt.ValidateAccessToken(token)
+	// 1. Validate JWT signature first (fast, no DB/cache needed)
+	claims, err := s.jwt.ValidateAccessToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Create hash for cache/database lookup
+	tokenHash := hashToken(token)
+
+	// 3. Try cache first (if cache is enabled)
+	if s.cache != nil {
+		cachedToken, err := s.cache.GetToken(context.Background(), tokenHash)
+		if err == nil {
+			// Cache hit - verify token is not revoked
+			if cachedToken.RevokedAt != nil {
+				return nil, errors.New("token has been revoked")
+			}
+			// Token is valid and not revoked
+			return claims, nil
+		}
+		// Cache miss - continue to database lookup
+		// Note: We only treat cache.ErrCacheMiss as a miss, other errors are logged but don't fail the request
+	}
+
+	// 4. Query database on cache miss
+	dbToken, err := s.db.GetAccessToken(context.Background(), tokenHash)
+	if err != nil {
+		return nil, errors.New("token not found or expired")
+	}
+
+	// Check if token is revoked
+	if dbToken.RevokedAt != nil {
+		// Cache the revoked status to prevent future DB queries
+		if s.cache != nil {
+			_ = s.cache.SetToken(context.Background(), tokenHash, dbToken, s.config.Auth.AccessTokenTTL)
+		}
+		return nil, errors.New("token has been revoked")
+	}
+
+	// 5. Cache valid token for future requests
+	if s.cache != nil {
+		ttl := time.Until(dbToken.ExpiresAt)
+		if ttl > 0 {
+			_ = s.cache.SetToken(context.Background(), tokenHash, dbToken, ttl)
+		}
+	}
+
+	return claims, nil
+}
+
+// hashToken creates a SHA-256 hash of the token for cache/database storage
+func hashToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", hash)
+}
+
+// RevokeToken revokes an access token and invalidates it from cache
+func (s *Service) RevokeToken(ctx context.Context, tokenID uuid.UUID, tokenString string) error {
+	// Revoke token in database
+	if err := s.db.RevokeAccessToken(ctx, tokenID); err != nil {
+		return err
+	}
+
+	// Invalidate cache if enabled
+	if s.cache != nil && tokenString != "" {
+		tokenHash := hashToken(tokenString)
+		_ = s.cache.InvalidateToken(ctx, tokenHash)
+	}
+
+	return nil
+}
+
+// GetCacheStats returns cache performance statistics
+func (s *Service) GetCacheStats() *cache.CacheStats {
+	if s.cache == nil {
+		return nil
+	}
+	stats := s.cache.GetStats()
+	return &stats
+}
+
+// CacheHealthCheck checks if cache is healthy and reachable
+func (s *Service) CacheHealthCheck(ctx context.Context) error {
+	if s.cache == nil {
+		return nil // Cache is optional, so no cache is not an error
+	}
+	return s.cache.Ping(ctx)
 }
 
 func (s *Service) ValidatePasswordStrength(password string) error {
