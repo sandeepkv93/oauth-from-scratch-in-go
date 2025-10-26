@@ -13,6 +13,17 @@ import (
 	"oauth-server/internal/db"
 )
 
+// SecretStore defines the minimal database interface needed for secret management
+type SecretStore interface {
+	CreateClientSecret(ctx context.Context, secret *db.ClientSecret) error
+	GetActiveClientSecrets(ctx context.Context, clientID uuid.UUID) ([]*db.ClientSecret, error)
+	GetClientSecretByID(ctx context.Context, secretID uuid.UUID) (*db.ClientSecret, error)
+	MarkSecretsNonPrimary(ctx context.Context, clientID uuid.UUID) error
+	RevokeClientSecret(ctx context.Context, secretID uuid.UUID) error
+	CleanupOldSecrets(ctx context.Context, clientID uuid.UUID, maxSecrets int) error
+	GetExpiringSecrets(ctx context.Context, withinDuration time.Duration) ([]*db.ClientSecret, error)
+}
+
 // SecretRotationConfig defines configuration for secret rotation
 type SecretRotationConfig struct {
 	MaxActiveSecrets int           // Maximum number of active secrets per client
@@ -35,12 +46,12 @@ func DefaultSecretRotationConfig() *SecretRotationConfig {
 
 // ClientSecretManager handles client secret rotation and validation
 type ClientSecretManager struct {
-	db     db.DatabaseInterface
+	db     SecretStore
 	config *SecretRotationConfig
 }
 
 // NewClientSecretManager creates a new client secret manager
-func NewClientSecretManager(database db.DatabaseInterface, config *SecretRotationConfig) *ClientSecretManager {
+func NewClientSecretManager(database SecretStore, config *SecretRotationConfig) *ClientSecretManager {
 	if config == nil {
 		config = DefaultSecretRotationConfig()
 	}
