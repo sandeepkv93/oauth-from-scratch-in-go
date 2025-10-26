@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"time"
+
 	"github.com/google/uuid"
 )
 
@@ -27,11 +29,20 @@ type DatabaseInterface interface {
 	CreateClient(ctx context.Context, client *Client) error
 	GetClientByID(ctx context.Context, clientID string) (*Client, error)
 	GetAllClients(ctx context.Context) ([]*Client, error)
-	
+
 	// Dynamic Client Registration operations (RFC 7591)
 	UpdateClient(ctx context.Context, client *Client) error
 	DeleteClient(ctx context.Context, clientID string) error
 	GetClientByRegistrationToken(ctx context.Context, token string) (*Client, error)
+
+	// Client secret rotation operations
+	CreateClientSecret(ctx context.Context, secret *ClientSecret) error
+	GetActiveClientSecrets(ctx context.Context, clientID uuid.UUID) ([]*ClientSecret, error)
+	GetClientSecretByID(ctx context.Context, secretID uuid.UUID) (*ClientSecret, error)
+	MarkSecretsNonPrimary(ctx context.Context, clientID uuid.UUID) error
+	RevokeClientSecret(ctx context.Context, secretID uuid.UUID) error
+	CleanupOldSecrets(ctx context.Context, clientID uuid.UUID, maxSecrets int) error
+	GetExpiringSecrets(ctx context.Context, withinDuration time.Duration) ([]*ClientSecret, error)
 	
 	// Authorization code operations
 	CreateAuthorizationCode(ctx context.Context, code *AuthorizationCode) error
