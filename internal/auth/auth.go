@@ -40,12 +40,13 @@ var (
 )
 
 type Service struct {
-	db           db.DatabaseInterface
-	jwt          *jwtpkg.Manager
-	pkce         *crypto.PKCEManager
-	config       *config.Config
-	scopes       *scopes.Service
-	pwnedChecker *security.PwnedPasswordChecker
+	db            db.DatabaseInterface
+	jwt           *jwtpkg.Manager
+	pkce          *crypto.PKCEManager
+	config        *config.Config
+	scopes        *scopes.Service
+	pwnedChecker  *security.PwnedPasswordChecker
+	secretManager *security.ClientSecretManager
 }
 
 type AuthorizeRequest struct {
@@ -124,13 +125,17 @@ func NewService(database db.DatabaseInterface, jwtManager *jwtpkg.Manager, cfg *
 		cfg.Security.PwnedPasswordsFailOpen,
 	)
 
+	// Create client secret manager with default config
+	secretManager := security.NewClientSecretManager(database, nil)
+
 	return &Service{
-		db:           database,
-		jwt:          jwtManager,
-		pkce:         crypto.NewPKCEManager(),
-		config:       cfg,
-		scopes:       scopes.NewService(database),
-		pwnedChecker: pwnedChecker,
+		db:            database,
+		jwt:           jwtManager,
+		pkce:          crypto.NewPKCEManager(),
+		config:        cfg,
+		scopes:        scopes.NewService(database),
+		pwnedChecker:  pwnedChecker,
+		secretManager: secretManager,
 	}
 }
 
@@ -157,8 +162,23 @@ func (s *Service) ValidateClient(ctx context.Context, clientID, clientSecret str
 		if clientSecret == "" {
 			return nil, ErrInvalidClient
 		}
-		
-		if err := bcrypt.CompareHashAndPassword([]byte(client.ClientSecret), []byte(clientSecret)); err != nil {
+
+		// Try validating with the new ClientSecretManager (supports rotation)
+		// This checks all active secrets in the client_secrets table
+		valid, err := s.secretManager.ValidateSecret(ctx, client.ID, clientSecret)
+		if err != nil {
+			// If there's an error querying the new table, fall back to legacy method
+			// This ensures backward compatibility during migration
+			if client.ClientSecret != "" {
+				if err := bcrypt.CompareHashAndPassword([]byte(client.ClientSecret), []byte(clientSecret)); err != nil {
+					return nil, ErrInvalidClient
+				}
+				return client, nil
+			}
+			return nil, ErrInvalidClient
+		}
+
+		if !valid {
 			return nil, ErrInvalidClient
 		}
 	}

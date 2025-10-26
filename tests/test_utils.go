@@ -26,6 +26,7 @@ type MockDB struct {
 	accessTokens  map[string]*db.AccessToken
 	refreshTokens map[string]*db.RefreshToken
 	deviceCodes   map[string]*db.DeviceCode
+	clientSecrets map[uuid.UUID][]*db.ClientSecret // keyed by client UUID
 }
 
 func NewMockDatabase() *MockDB {
@@ -36,6 +37,7 @@ func NewMockDatabase() *MockDB {
 		accessTokens:  make(map[string]*db.AccessToken),
 		refreshTokens: make(map[string]*db.RefreshToken),
 		deviceCodes:   make(map[string]*db.DeviceCode),
+		clientSecrets: make(map[uuid.UUID][]*db.ClientSecret),
 	}
 }
 
@@ -316,6 +318,97 @@ func (m *MockDB) GetClientByRegistrationToken(ctx context.Context, token string)
 		}
 	}
 	return nil, errors.New("client not found")
+}
+
+// Client secret methods
+func (m *MockDB) CreateClientSecret(ctx context.Context, secret *db.ClientSecret) error {
+	secret.ID = uuid.New()
+	secret.CreatedAt = time.Now()
+	secret.UpdatedAt = time.Now()
+	m.clientSecrets[secret.ClientID] = append(m.clientSecrets[secret.ClientID], secret)
+	return nil
+}
+
+func (m *MockDB) GetActiveClientSecrets(ctx context.Context, clientID uuid.UUID) ([]*db.ClientSecret, error) {
+	secrets := m.clientSecrets[clientID]
+	active := []*db.ClientSecret{}
+	now := time.Now()
+	for _, secret := range secrets {
+		if secret.RevokedAt == nil && (secret.ExpiresAt == nil || secret.ExpiresAt.After(now)) {
+			active = append(active, secret)
+		}
+	}
+	return active, nil
+}
+
+func (m *MockDB) GetClientSecretByID(ctx context.Context, secretID uuid.UUID) (*db.ClientSecret, error) {
+	for _, secrets := range m.clientSecrets {
+		for _, secret := range secrets {
+			if secret.ID == secretID {
+				return secret, nil
+			}
+		}
+	}
+	return nil, errors.New("secret not found")
+}
+
+func (m *MockDB) MarkSecretsNonPrimary(ctx context.Context, clientID uuid.UUID) error {
+	secrets := m.clientSecrets[clientID]
+	now := time.Now()
+	for _, secret := range secrets {
+		if secret.RevokedAt == nil {
+			if secret.IsPrimary {
+				secret.RotatedAt = &now
+			}
+			secret.IsPrimary = false
+			secret.UpdatedAt = now
+		}
+	}
+	return nil
+}
+
+func (m *MockDB) RevokeClientSecret(ctx context.Context, secretID uuid.UUID) error {
+	for _, secrets := range m.clientSecrets {
+		for _, secret := range secrets {
+			if secret.ID == secretID && secret.RevokedAt == nil {
+				now := time.Now()
+				secret.RevokedAt = &now
+				secret.UpdatedAt = now
+				return nil
+			}
+		}
+	}
+	return errors.New("secret not found or already revoked")
+}
+
+func (m *MockDB) CleanupOldSecrets(ctx context.Context, clientID uuid.UUID, maxSecrets int) error {
+	secrets := m.clientSecrets[clientID]
+	if len(secrets) <= maxSecrets {
+		return nil
+	}
+
+	// Sort by created_at desc and keep only the most recent maxSecrets
+	// For simplicity in mock, we'll just truncate the slice
+	// In production, this would be a proper SQL query
+	m.clientSecrets[clientID] = secrets[:maxSecrets]
+	return nil
+}
+
+func (m *MockDB) GetExpiringSecrets(ctx context.Context, withinDuration time.Duration) ([]*db.ClientSecret, error) {
+	var expiring []*db.ClientSecret
+	now := time.Now()
+	threshold := now.Add(withinDuration)
+
+	for _, secrets := range m.clientSecrets {
+		for _, secret := range secrets {
+			if secret.RevokedAt == nil && secret.ExpiresAt != nil {
+				if secret.ExpiresAt.After(now) && secret.ExpiresAt.Before(threshold) {
+					expiring = append(expiring, secret)
+				}
+			}
+		}
+	}
+	return expiring, nil
 }
 
 func SetupTestAuth() (*auth.Service, *MockDB) {

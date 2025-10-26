@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 // CreateClientSecret creates a new client secret
@@ -245,7 +244,7 @@ func (d *Database) GetExpiringSecrets(ctx context.Context, withinDuration time.D
 }
 
 // Transaction implementation - wrap the database methods
-func (tx *DBTransaction) CreateClientSecret(ctx context.Context, secret *ClientSecret) error {
+func (tx *DatabaseTransaction) CreateClientSecret(ctx context.Context, secret *ClientSecret) error {
 	query := `
 		INSERT INTO client_secrets (id, client_id, secret_hash, created_at, expires_at, rotated_at, revoked_at, is_primary, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -285,7 +284,7 @@ func (tx *DBTransaction) CreateClientSecret(ctx context.Context, secret *ClientS
 	return nil
 }
 
-func (tx *DBTransaction) GetActiveClientSecrets(ctx context.Context, clientID uuid.UUID) ([]*ClientSecret, error) {
+func (tx *DatabaseTransaction) GetActiveClientSecrets(ctx context.Context, clientID uuid.UUID) ([]*ClientSecret, error) {
 	query := `
 		SELECT id, client_id, secret_hash, created_at, expires_at, rotated_at, revoked_at, is_primary, updated_at
 		FROM client_secrets
@@ -324,7 +323,7 @@ func (tx *DBTransaction) GetActiveClientSecrets(ctx context.Context, clientID uu
 	return secrets, rows.Err()
 }
 
-func (tx *DBTransaction) GetClientSecretByID(ctx context.Context, secretID uuid.UUID) (*ClientSecret, error) {
+func (tx *DatabaseTransaction) GetClientSecretByID(ctx context.Context, secretID uuid.UUID) (*ClientSecret, error) {
 	query := `
 		SELECT id, client_id, secret_hash, created_at, expires_at, rotated_at, revoked_at, is_primary, updated_at
 		FROM client_secrets
@@ -355,7 +354,7 @@ func (tx *DBTransaction) GetClientSecretByID(ctx context.Context, secretID uuid.
 	return secret, nil
 }
 
-func (tx *DBTransaction) MarkSecretsNonPrimary(ctx context.Context, clientID uuid.UUID) error {
+func (tx *DatabaseTransaction) MarkSecretsNonPrimary(ctx context.Context, clientID uuid.UUID) error {
 	query := `
 		UPDATE client_secrets
 		SET is_primary = false,
@@ -373,7 +372,7 @@ func (tx *DBTransaction) MarkSecretsNonPrimary(ctx context.Context, clientID uui
 	return nil
 }
 
-func (tx *DBTransaction) RevokeClientSecret(ctx context.Context, secretID uuid.UUID) error {
+func (tx *DatabaseTransaction) RevokeClientSecret(ctx context.Context, secretID uuid.UUID) error {
 	query := `
 		UPDATE client_secrets
 		SET revoked_at = NOW(),
@@ -399,7 +398,7 @@ func (tx *DBTransaction) RevokeClientSecret(ctx context.Context, secretID uuid.U
 	return nil
 }
 
-func (tx *DBTransaction) CleanupOldSecrets(ctx context.Context, clientID uuid.UUID, maxSecrets int) error {
+func (tx *DatabaseTransaction) CleanupOldSecrets(ctx context.Context, clientID uuid.UUID, maxSecrets int) error {
 	query := `
 		DELETE FROM client_secrets
 		WHERE id IN (
@@ -419,7 +418,7 @@ func (tx *DBTransaction) CleanupOldSecrets(ctx context.Context, clientID uuid.UU
 	return nil
 }
 
-func (tx *DBTransaction) GetExpiringSecrets(ctx context.Context, withinDuration time.Duration) ([]*ClientSecret, error) {
+func (tx *DatabaseTransaction) GetExpiringSecrets(ctx context.Context, withinDuration time.Duration) ([]*ClientSecret, error) {
 	query := `
 		SELECT id, client_id, secret_hash, created_at, expires_at, rotated_at, revoked_at, is_primary, updated_at
 		FROM client_secrets
