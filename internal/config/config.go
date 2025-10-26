@@ -74,6 +74,14 @@ type SecurityConfig struct {
 	PwnedPasswordsEnabled  bool
 	PwnedPasswordsTimeout  time.Duration
 	PwnedPasswordsFailOpen bool // If true, allow password on API errors
+
+	// Client Secret Rotation
+	SecretRotationEnabled      bool
+	SecretMaxActiveSecrets     int
+	SecretRotationPeriod       time.Duration
+	SecretGracePeriod          time.Duration
+	SecretAutoRotate           bool
+	SecretNotifyBeforeExpiry   time.Duration
 }
 
 type RedisConfig struct {
@@ -134,6 +142,14 @@ func Load() *Config {
 			PwnedPasswordsEnabled:  getBoolEnv("PWNED_PASSWORDS_ENABLED", true), // Enabled by default for security
 			PwnedPasswordsTimeout:  getDurationEnv("PWNED_PASSWORDS_TIMEOUT", 5*time.Second),
 			PwnedPasswordsFailOpen: getBoolEnv("PWNED_PASSWORDS_FAIL_OPEN", true), // Fail open by default
+
+			// Client Secret Rotation
+			SecretRotationEnabled:      getBoolEnv("SECRET_ROTATION_ENABLED", true),      // Enabled by default for security
+			SecretMaxActiveSecrets:     getIntEnv("SECRET_MAX_ACTIVE_SECRETS", 2),        // Keep current + 1 previous
+			SecretRotationPeriod:       getDurationEnv("SECRET_ROTATION_PERIOD", 90*24*time.Hour), // 90 days
+			SecretGracePeriod:          getDurationEnv("SECRET_GRACE_PERIOD", 7*24*time.Hour),     // 7 days
+			SecretAutoRotate:           getBoolEnv("SECRET_AUTO_ROTATE", false),            // Manual rotation by default
+			SecretNotifyBeforeExpiry:   getDurationEnv("SECRET_NOTIFY_BEFORE_EXPIRY", 14*24*time.Hour), // Notify 14 days before
 		},
 		Redis: RedisConfig{
 			Enabled:  getBoolEnv("REDIS_ENABLED", false),
