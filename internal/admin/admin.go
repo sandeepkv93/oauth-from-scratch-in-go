@@ -19,15 +19,17 @@ import (
 	"oauth-server/internal/auth"
 	"oauth-server/internal/db"
 	"oauth-server/internal/scopes"
+	"oauth-server/internal/security"
 )
 
 type Service struct {
-	db          db.DatabaseInterface
-	auth        *auth.Service
-	scopes      *scopes.Service
-	templates   *template.Template
-	startTime   time.Time
-	version     string
+	db            db.DatabaseInterface
+	auth          *auth.Service
+	scopes        *scopes.Service
+	secretManager *security.ClientSecretManager
+	templates     *template.Template
+	startTime     time.Time
+	version       string
 }
 
 type Config struct {
@@ -109,11 +111,12 @@ type ClientFormData struct {
 
 func NewService(database db.DatabaseInterface, authService *auth.Service, scopeService *scopes.Service, config *Config) *Service {
 	s := &Service{
-		db:        database,
-		auth:      authService,
-		scopes:    scopeService,
-		startTime: time.Now(),
-		version:   config.Version,
+		db:            database,
+		auth:          authService,
+		scopes:        scopeService,
+		secretManager: security.NewClientSecretManager(database, nil),
+		startTime:     time.Now(),
+		version:       config.Version,
 	}
 
 	// Load templates
@@ -175,6 +178,11 @@ func (s *Service) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/clients/{client_id}/regenerate-secret", s.APIRegenerateSecret).Methods("POST")
 	api.HandleFunc("/clients/export", s.APIExportClients).Methods("GET")
 	api.HandleFunc("/cleanup/tokens", s.APICleanupTokens).Methods("POST")
+
+	// Client secret rotation endpoints
+	api.HandleFunc("/clients/{client_id}/secrets/rotate", s.APIRotateSecret).Methods("POST")
+	api.HandleFunc("/clients/{client_id}/secrets", s.APIListSecrets).Methods("GET")
+	api.HandleFunc("/clients/{client_id}/secrets/{secret_id}", s.APIRevokeSecret).Methods("DELETE")
 }
 
 func (s *Service) Dashboard(w http.ResponseWriter, r *http.Request) {
@@ -661,4 +669,118 @@ func (s *Service) generateRandomString(length int) (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(bytes), nil
+}
+
+// Client Secret Management API endpoints
+
+// APIRotateSecret rotates a client's secret
+// POST /admin/api/clients/{client_id}/secrets/rotate
+func (s *Service) APIRotateSecret(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := vars["client_id"]
+
+	ctx := r.Context()
+
+	// Get the client
+	client, err := s.db.GetClientByID(ctx, clientID)
+	if err != nil {
+		s.sendJSONError(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	// Rotate the secret
+	newSecret, err := s.secretManager.RotateSecret(ctx, client.ID)
+	if err != nil {
+		s.sendJSONError(w, fmt.Sprintf("Failed to rotate secret: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return the new secret (only time it's available in plain text)
+	response := map[string]interface{}{
+		"success":       true,
+		"message":       "Client secret rotated successfully",
+		"client_id":     clientID,
+		"client_secret": newSecret.PlainText,
+		"secret_id":     newSecret.ID,
+		"expires_at":    newSecret.ExpiresAt,
+		"is_primary":    newSecret.IsPrimary,
+		"warning":       "Save this secret immediately. It will not be shown again.",
+	}
+
+	s.sendJSON(w, response)
+}
+
+// APIListSecrets lists all active secrets for a client
+// GET /admin/api/clients/{client_id}/secrets
+func (s *Service) APIListSecrets(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := vars["client_id"]
+
+	ctx := r.Context()
+
+	// Get the client
+	client, err := s.db.GetClientByID(ctx, clientID)
+	if err != nil {
+		s.sendJSONError(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	// Get secret info (non-sensitive metadata)
+	secretInfo, err := s.secretManager.GetSecretInfo(ctx, client.ID)
+	if err != nil {
+		s.sendJSONError(w, fmt.Sprintf("Failed to get secrets: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.sendJSON(w, secretInfo)
+}
+
+// APIRevokeSecret revokes a specific client secret
+// DELETE /admin/api/clients/{client_id}/secrets/{secret_id}
+func (s *Service) APIRevokeSecret(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	clientID := vars["client_id"]
+	secretIDStr := vars["secret_id"]
+
+	ctx := r.Context()
+
+	// Parse secret ID
+	secretID, err := uuid.Parse(secretIDStr)
+	if err != nil {
+		s.sendJSONError(w, "Invalid secret ID format", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the client exists
+	client, err := s.db.GetClientByID(ctx, clientID)
+	if err != nil {
+		s.sendJSONError(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the secret to verify it belongs to this client
+	secret, err := s.db.GetClientSecretByID(ctx, secretID)
+	if err != nil {
+		s.sendJSONError(w, "Secret not found", http.StatusNotFound)
+		return
+	}
+
+	if secret.ClientID != client.ID {
+		s.sendJSONError(w, "Secret does not belong to this client", http.StatusForbidden)
+		return
+	}
+
+	// Revoke the secret
+	if err := s.secretManager.RevokeSecret(ctx, secretID); err != nil {
+		s.sendJSONError(w, fmt.Sprintf("Failed to revoke secret: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success":   true,
+		"message":   "Secret revoked successfully",
+		"secret_id": secretID,
+	}
+
+	s.sendJSON(w, response)
 }
